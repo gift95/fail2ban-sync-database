@@ -5,3 +5,7 @@ bantime.factor = 3
 bantime.maxtime = 5w
 known_duration = 48h
 allowed_duration = 2m
+
+[api_tokens]
+client1 = GENERATE_TOKEN_1
+client2 = GENERATE_TOKEN_2
