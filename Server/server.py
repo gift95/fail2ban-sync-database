@@ -8,6 +8,8 @@ import os
 import re
 import time
 from contextlib import closing
+from flask_httpauth import HTTPTokenAuth
+
 
 # Initialisierung der Flask-Anwendung
 app = Flask(__name__)
@@ -29,14 +31,20 @@ def load_config():
 
     if os.path.exists('serverconfig.txt'):
         config.read('serverconfig.txt')
+        
+    tokens = {}
+    if 'api_tokens' in config:
+        for client, token in config['api_tokens'].items():
+            tokens[token] = client
 
     return {
-        'bantime': config.get('DEFAULT', 'bantime', fallback='3m'),
+        'bantime': config.get('DEFAULT', 'bantime', fallback='10m'),
         'bantime_increment': config.getboolean('DEFAULT', 'bantime.increment', fallback=True),
         'bantime_factor': config.getint('DEFAULT', 'bantime.factor', fallback=24),
         'bantime_maxtime': config.get('DEFAULT', 'bantime.maxtime', fallback='5w'),
         'known_duration': config.get('DEFAULT', 'known_duration', fallback='48h'),
-        'allowed_duration': config.get('DEFAULT', 'allowed_duration', fallback='2m')
+        'allowed_duration': config.get('DEFAULT', 'allowed_duration', fallback='2m'),
+        'api_tokens': tokens
     }
 
 # Zeitkonvertierung
@@ -158,7 +166,18 @@ def calculate_block_duration(block_count):
         return MAX_BLOCK_DURATION
     return duration
 
+
+# Token-Authentifizierung
+auth = HTTPTokenAuth(scheme='Bearer')
+config = load_config()
+TOKENS = config['api_tokens'] 
+
+@auth.verify_token
+def verify_token(token):
+    return TOKENS.get(token)
+
 @app.route('/add_ips', methods=['POST'])
+@auth.login_required
 def add_ips():
     update_ip_status()
 
@@ -235,6 +254,7 @@ def add_ips():
             return jsonify({"error": "Fehler beim Hinzufügen der IP-Adressen"}), 400
 
 @app.route('/get_ips', methods=['GET'])
+@auth.login_required
 def get_ips():
     update_ip_status()
 
@@ -260,6 +280,7 @@ def get_ips():
         return jsonify(ip_addresses), 200
 
 @app.route('/get_allowed_ips', methods=['GET'])
+@auth.login_required
 def get_allowed_ips():
     update_ip_status()
 
@@ -285,6 +306,7 @@ def get_allowed_ips():
         return jsonify(ip_addresses), 200
 
 @app.route('/get_known_ips', methods=['GET'])
+@auth.login_required
 def get_known_ips():
     update_ip_status()
 
@@ -309,7 +331,8 @@ def get_known_ips():
         logger.info(f"Anzahl der bekannten IPs: {len(ip_addresses)}")
         return jsonify(ip_addresses), 200
 
+
 if __name__ == '__main__':
     init_db()
     logger.info("Server gestartet")
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False)
