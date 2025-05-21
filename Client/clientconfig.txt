@@ -1,5 +1,5 @@
 [server]
-host = 192.168.0.3
+host = 127.0.0.1
 port = 5000
 protocol = http
 
@@ -10,3 +10,6 @@ backup_count = 3
 
 [fail2ban]
 jail = sshd
+
+[auth]
+token = ADD_YOUR_TOKEN
