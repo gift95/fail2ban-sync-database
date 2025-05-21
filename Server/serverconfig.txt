@@ -1,7 +1,7 @@
 [DEFAULT]
-bantime = 3m
+bantime = 10m
 bantime.increment = true
-bantime.factor = 24
+bantime.factor = 3
 bantime.maxtime = 5w
 known_duration = 48h
 allowed_duration = 2m

@@ -104,7 +104,7 @@ token = DEIN_TOKEN_AUS_SERVER
 
 ## Kontakt
 
-Bei Problemen oder Fragen, wende dich an den zuständigen Administrator oder das IT-Team.
+Bei Fragen wenden Sie sich an den Entwickler.
 
 ---
 

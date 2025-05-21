@@ -124,8 +124,7 @@ token = <EINZELNER_TOKEN_AUS_SERVERCONFIG.TXT>
 
 ## Kontakt
 
-Fragen oder Feedback?  
-Bitte melde dich bei uns.
+Bei Fragen wenden Sie sich an den Entwickler.
 
 ---
 

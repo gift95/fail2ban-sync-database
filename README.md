@@ -119,8 +119,7 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
 
 ## Kontakt
 
-Fragen, Anregungen oder Fehler?  
-Wende dich an dein IT-Team oder den Entwicklerkreis.
+Bei Fragen wenden Sie sich an den Entwickler.
 
 ---
 
