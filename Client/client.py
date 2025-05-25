@@ -31,9 +31,12 @@ def load_config():
     config = configparser.ConfigParser()
     config.read_dict({'DEFAULT': DEFAULT_CLIENT_CONFIG})
 
-    # Konfigurationsdatei lesen, falls vorhanden
     if os.path.exists('clientconfig.txt'):
         config.read('clientconfig.txt')
+
+    token = ""
+    if config.has_option('auth', 'token'):
+        token = config.get('auth', 'token')
 
     return {
         'server': {
@@ -48,31 +51,27 @@ def load_config():
         },
         'fail2ban': {
             'jail': config.get('fail2ban', 'jail', fallback='sshd')
+        },
+        'auth': {
+            'token': token
         }
     }
 
 def setup_logging(log_file, max_bytes, backup_count):
-    """Richtet das Logging-System ein"""
     logger = logging.getLogger('ip_client')
     logger.setLevel(logging.INFO)
-
-    # Datei-Handler mit Rotation
     handler = RotatingFileHandler(
         log_file,
         maxBytes=int(max_bytes),
         backupCount=int(backup_count)
     )
     handler.setLevel(logging.INFO)
-
-    # Formatierung
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     handler.setFormatter(formatter)
-
     logger.addHandler(handler)
     return logger
 
 def get_banned_ips(jail):
-    """Ruft die gebannten IPs von Fail2Ban für das angegebene Jail ab."""
     try:
         result = subprocess.run(
             ['fail2ban-client', 'get', jail, 'banned'],
@@ -84,14 +83,12 @@ def get_banned_ips(jail):
         if output.startswith("[") and output.endswith("]"):
             iplist = ast.literal_eval(output)
             return iplist
-        # Falls jemals ein normales Whitespace-getrenntes Stringformat kommt:
         return output.split()
     except Exception as e:
         print(f"Fehler beim Abrufen gebannter IPs: {e}")
         return []
 
 def get_local_mac_address():
-    """Ermittelt die lokale MAC-Adresse"""
     try:
         result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, check=True)
         mac_address_match = re.search(r'link/ether\s+([0-9A-Fa-f:]{17})', result.stdout)
@@ -102,9 +99,8 @@ def get_local_mac_address():
         print(f"Fehler beim Abrufen der MAC-Adresse: {e}")
         return None
 
-def send_banned_ips(banned_ips, server_url, mac_address, logger):
-    """Sendet gebannte IPs an den Server"""
-    headers = {'Content-Type': 'application/json'}
+def send_banned_ips(banned_ips, server_url, mac_address, logger, token):
+    headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'}
     data = {
         'ips': banned_ips,
         'description': 'Gebannte IPs von fail2ban',
@@ -120,10 +116,10 @@ def send_banned_ips(banned_ips, server_url, mac_address, logger):
     except requests.RequestException as e:
         logger.error(f"Fehler beim Senden der Anfrage: {e}")
 
-def get_unknown_ips(server_url, mac_address, logger):
-    """Ruft unbekannte IPs vom Server ab"""
+def get_unknown_ips(server_url, mac_address, logger, token):
+    headers = {'Authorization': f'Bearer {token}'}
     try:
-        response = requests.get(f"{server_url}/get_ips?mac_address={mac_address}")
+        response = requests.get(f"{server_url}/get_ips?mac_address={mac_address}", headers=headers)
         if response.status_code == 200:
             return response.json()
         logger.error(f"Fehler beim Abrufen der IPs: {response.status_code} - {response.text}")
@@ -132,10 +128,10 @@ def get_unknown_ips(server_url, mac_address, logger):
         logger.error(f"Fehler beim Senden der Anfrage: {e}")
         return []
 
-def get_allowed_ips(server_url, logger):
-    """Ruft erlaubte IPs vom Server ab"""
+def get_allowed_ips(server_url, logger, token):
+    headers = {'Authorization': f'Bearer {token}'}
     try:
-        response = requests.get(f"{server_url}/get_allowed_ips")
+        response = requests.get(f"{server_url}/get_allowed_ips", headers=headers)
         if response.status_code == 200:
             return response.json()
         logger.error(f"Fehler beim Abrufen der allowed IPs: {response.status_code} - {response.text}")
@@ -145,7 +141,6 @@ def get_allowed_ips(server_url, logger):
         return []
 
 def add_ips_to_fail2ban(ips, jail, logger):
-    """Fügt IPs zu Fail2Ban hinzu"""
     try:
         for ip in ips:
             subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], check=True)
@@ -154,7 +149,6 @@ def add_ips_to_fail2ban(ips, jail, logger):
         logger.error(f"Fehler beim Hinzufügen der IPs zu Fail2Ban: {e}")
 
 def allow_ips_in_fail2ban(ips, jail, logger):
-    """Erlaubt IPs in Fail2Ban"""
     try:
         for ip in ips:
             subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], check=True)
@@ -163,16 +157,13 @@ def allow_ips_in_fail2ban(ips, jail, logger):
         logger.error(f"Fehler beim Erlauben der IPs in Fail2Ban: {e}")
 
 def main():
-    """Hauptfunktion des Clients"""
     try:
-        # Konfiguration laden
         config = load_config()
+        token = config['auth']['token']
 
-        # Server-URL erstellen
         server_url = f"{config['server']['protocol']}://{config['server']['host']}:{config['server']['port']}"
         jail = config['fail2ban']['jail']
 
-        # Logging einrichten
         logger = setup_logging(
             config['logging']['log_file'],
             int(config['logging']['max_bytes']),
@@ -180,29 +171,25 @@ def main():
         )
 
         logger.info("Client gestartet")
-
         mac_address = get_local_mac_address()
         if not mac_address:
             logger.error("MAC-Adresse konnte nicht ermittelt werden.")
             return
 
-        # Senden der gebannten IPs an den Server
         banned_ips = get_banned_ips(jail)
         if banned_ips:
-            send_banned_ips(banned_ips, server_url, mac_address, logger)
+            send_banned_ips(banned_ips, server_url, mac_address, logger, token)
         else:
             logger.info("Keine gebannten IPs gefunden.")
 
-        # Abrufen und Blockieren der unbekannten IPs
-        unknown_ips = get_unknown_ips(server_url, mac_address, logger)
+        unknown_ips = get_unknown_ips(server_url, mac_address, logger, token)
         if unknown_ips:
             ip_addresses = [ip['ip_address'] for ip in unknown_ips]
             add_ips_to_fail2ban(ip_addresses, jail, logger)
         else:
             logger.info("Keine unbekannten IPs gefunden.")
 
-        # Abrufen und Erlauben der allowed IPs
-        allowed_ips = get_allowed_ips(server_url, logger)
+        allowed_ips = get_allowed_ips(server_url, logger, token)
         if allowed_ips:
             ip_addresses = [ip['ip_address'] for ip in allowed_ips]
             allow_ips_in_fail2ban(ip_addresses, jail, logger)
