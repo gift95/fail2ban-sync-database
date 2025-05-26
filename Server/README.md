@@ -32,7 +32,7 @@ chmod +x install_server.sh
 Das Script erledigt:
 - Systembenutzer & Ordner anlegen (`/opt/fail2bansync`)
 - `server.py` dorthin kopieren
-- 10 Tokens erzeugen und in `serverconfig.txt` eintragen
+- 9 Tokens erzeugen und in `serverconfig.txt` eintragen
 - Abhängigkeiten installieren (`flask`, `flask_httpauth`)
 - Service als `fail2bansync-server` aktivieren & starten
 
@@ -88,7 +88,7 @@ Nach jeder Änderung an `server.py` oder `serverconfig.txt` bitte den Service ne
 
 ## Client-Anbindung
 
-Am Ende der Installation gibt das Script 10 `[auth]`-Blöcke für `clientconfig.txt` aus – einer für jeden Client (1–10).
+Am Ende der Installation gibt das Script 9 `[auth]`-Blöcke für `clientconfig.txt` aus – einer für jeden Client (1–9).
 
 **Für jeden Client:**
 ```ini
