@@ -15,7 +15,18 @@ Er eignet sich zur einfachen Integration in bestehende Systeme.
 
 ---
 
+
 ## Installation (Ubuntu, ab 20.04 empfohlen)
+
+### Voraussetungen
+
+Fail2ban muss bereits installiert und aktiviert sein.
+
+```bash
+apt install fail2ban
+service fail2ban start
+```
+
 
 ### 1. Dateien kopieren
 
@@ -37,12 +48,12 @@ Das Script erledigt:
 ### 3. Konfiguration
 
 Öffne `/opt/fail2bansync-client/clientconfig.txt`  
-und **trage den zu deinem Client passenden Token** (ausgegeben vom Server-Admin) in den `[auth]`-Block ein.
+und trage die IP-Adresse des Servers in den `[host]`-Block sowie den zu deinem Client passenden Token in den `[auth]`-Block ein.
 
 **Beispiel:**
 ```ini
 [server]
-host = 192.168.0.3
+host = 192.168.0.1
 port = 5000
 protocol = http
 
@@ -65,6 +76,7 @@ token = DEIN_TOKEN_AUS_SERVER
 - **Automatische Ausführung:**  
   Der Client läuft jede Minute als Cronjob und schreibt sein Log nach:  
   `/opt/fail2bansync-client/client_cron.log`
+  Weitere Logs findest du in der Datei `client.log` im gleichen Verzeichnis.
 
 - **Cronjob prüfen:**  
   ```bash
@@ -89,15 +101,16 @@ token = DEIN_TOKEN_AUS_SERVER
 
 ## Fehlerbehebung
 
-- Prüfe die Logdatei `/opt/fail2bansync-client/client_cron.log` bei Problemen.
+- Prüfe die Logdateien `/opt/fail2bansync-client/client_cron.log` und `/opt/fail2bansync-client/client.log` bei Problemen.
 - Kontrolliere, ob die Systemzeit korrekt läuft (Cronjobs sind zeitgesteuert).
+- Host IP korrekt eingetragen?
 - Token korrekt eingetragen? Falsche oder fehlende Tokens führen zu HTTP 401 Fehlern.
 
 ---
 
 ## Upgrade
 
-- Bei neuer Version einfach die neue `client.py` nach `/opt/fail2bansync-client/` kopieren.
+- Bei änderungen einfach die neue Datei `client.py` nach `/opt/fail2bansync-client/` kopieren.
 - Es ist kein Neustart nötig – der Cronjob übernimmt alles.
 
 ---
