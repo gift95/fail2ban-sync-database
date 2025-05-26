@@ -13,6 +13,9 @@ echo
 sudo apt update
 sudo apt install -y python3 python3-pip
 
+# Curl installieren (falls nicht vorhanden)
+sudo apt install -y curl
+
 # 2. Zielordner anlegen
 sudo mkdir -p "$INSTALL_DIR"
 sudo chown "$USER":"$USER" "$INSTALL_DIR"
@@ -29,7 +32,7 @@ chown "$USER":"$USER" "$INSTALL_DIR/$CLIENT_FILE"
 if [ ! -f "$INSTALL_DIR/$CONFIG_FILE" ]; then
     cat > "$INSTALL_DIR/$CONFIG_FILE" <<EOF
 [server]
-host = 192.168.0.3
+host = 192.168.0.1
 port = 5000
 protocol = http
 
@@ -56,10 +59,10 @@ CRON_CMD="cd $INSTALL_DIR && /usr/bin/python3 $INSTALL_DIR/$CLIENT_FILE >> $INST
 ( crontab -l 2>/dev/null | grep -Fv "$CRON_CMD" ; echo "* * * * * $CRON_CMD" ) | crontab -
 
 echo
-echo "==== Fertig! ===="
+echo "Fertig!"
 echo "Client ist installiert in: $INSTALL_DIR"
-echo "Bitte trage den passenden Token in [auth] token=... in $INSTALL_DIR/$CONFIG_FILE ein."
-echo "Logs findest du in $INSTALL_DIR/client_cron.log"
+echo "Bitte trage die Korrekte IP Adresse des Hosts in [server] host=... sowie den passenden Token in [auth] token=... in $INSTALL_DIR/$CONFIG_FILE ein."
+echo "Logs findest du in $INSTALL_DIR/client.log"
 echo
 echo "Client läuft nun automatisch jede Minute als Cronjob."
 echo "Cronjob prüfen: crontab -l"
