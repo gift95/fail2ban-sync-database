@@ -57,7 +57,7 @@ def main():
         print(f"\n===== {label} IPs ({len(data)}) =====")
         if data:
             for ip in data:
-                print(f"ID: {ip['id']} | IP: {ip['ip_address']} | Status: {ip['status']} | Bis: {ip['blocked_until']} | Allowed seit: {ip['allowed_since']} | Block-Count: {ip['block_count']}")
+                print(f"ID: {ip['id']} | IP: {ip['ip_address']} | Status: {ip['status']} | Geblockt bis: {ip['blocked_until']} | Erlaubt seit: {ip['allowed_since']} | Block-Count: {ip['block_count']} | Gemeldet von: {ip['reported_by']}")
         else:
             print("Keine Daten erhalten oder Fehler.")
 
