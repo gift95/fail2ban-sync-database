@@ -101,7 +101,7 @@ def init_db():
                 reported_by TEXT,
                 blocked_until TIMESTAMP,
                 allowed_since TIMESTAMP,
-                block_count INTEGER DEFAULT 0
+                block_count INTEGER DEFAULT 1
             )
         ''')
         conn.commit()
@@ -159,7 +159,7 @@ def calculate_block_duration(block_count):
         return BLOCK_DURATION
 
     # Exponentielle Blockzeit basierend auf der Anzahl der Vorfälle
-    duration = BLOCK_DURATION * (BLOCK_FACTOR ** max(0, block_count))
+    duration = BLOCK_DURATION * (BLOCK_FACTOR ** max(0, block_count - 1))
 
     # Obergrenze beachten
     if duration > MAX_BLOCK_DURATION:
@@ -233,7 +233,7 @@ def add_ips():
                             INSERT INTO ip_addresses
                             (ip_address, description, status, reported_by, blocked_until, block_count)
                             VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, block_count))
+                        ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, 1))
                     else:
                         cursor.execute('''
                             UPDATE ip_addresses
