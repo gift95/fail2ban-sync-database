@@ -2,7 +2,7 @@ import requests
 import configparser
 import os
 
-CONFIG_FILE = "clientconfig.txt"
+CONFIG_FILE = "/opt/fail2bansync-client/clientconfig.ini"
 DEFAULT_SERVER = {
     "host": "127.0.0.1",
     "port": "5000",
@@ -41,7 +41,7 @@ def get_ips(url, token, label):
 def main():
     server, token = load_config()
     if not token:
-        print("Kein Token gefunden! Trage einen gültigen Token in [auth] token=... in clientconfig.txt ein.")
+        print("Kein Token gefunden! Trage einen gültigen Token in [auth] token=... in clientconfig.ini ein.")
         return
 
     base_url = f"{server['protocol']}://{server['host']}:{server['port']}"

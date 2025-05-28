@@ -32,9 +32,9 @@ fi
 sudo cp "$SERVER_FILE" "$INSTALL_DIR/$SERVER_FILE"
 sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/$SERVER_FILE"
 
-# 5. Beispiel-Konfig anlegen (falls nicht vorhanden)
-if [ ! -f "$INSTALL_DIR/serverconfig.txt" ]; then
-    sudo tee "$INSTALL_DIR/serverconfig.txt" >/dev/null <<EOF
+# 5. Beispiel-Konfig anlegen
+if [ ! -f "$INSTALL_DIR/serverconfig.ini" ]; then
+    sudo tee "$INSTALL_DIR/serverconfig.ini" >/dev/null <<EOF
 [DEFAULT]
 bantime = 10m
 bantime.increment = true
@@ -54,7 +54,7 @@ client7 = $(openssl rand -hex 32)
 client8 = $(openssl rand -hex 32)
 client9 = $(openssl rand -hex 32)
 EOF
-    sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/serverconfig.txt"
+    sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/serverconfig.ini"
 fi
 
 # 6. Abhängigkeiten installieren
@@ -87,7 +87,7 @@ echo "==== Fertig! ===="
 echo "Der Fail2BanSync-Server läuft nun als Systemd-Service: $SERVICE_NAME"
 echo "Prüfe den Status mit: sudo systemctl status $SERVICE_NAME"
 echo
-echo "Die Konfigdatei findest du unter: $INSTALL_DIR/serverconfig.txt"
+echo "Die Konfigdatei findest du unter: $INSTALL_DIR/serverconfig.ini"
 echo
 echo "Falls du Änderungen an server.py vornimmst, kopiere sie erneut ins Zielverzeichnis und starte den Service neu:"
 echo "sudo cp server.py $INSTALL_DIR/server.py && sudo systemctl restart $SERVICE_NAME"

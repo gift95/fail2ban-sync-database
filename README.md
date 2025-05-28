@@ -1,7 +1,7 @@
 
 # Fail2BanSync – Zentrale IP-Synchronisation für Fail2Ban
 
-Fail2BanSync ermöglicht die zentrale Erfassung, Synchronisierung und Verwaltung gebannter und erlaubter IP-Adressen über mehrere Server mit Fail2Ban.  
+Fail2Ban-Sync ermöglicht die zentrale Erfassung, Synchronisierung und Verwaltung gebannter und erlaubter IP-Adressen über mehrere Server mit Fail2Ban.  
 Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung und beliebig vielen synchronisierenden Clients.
 
 ---
@@ -10,11 +10,11 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
 
 - Zentrale REST-API (Flask-basiert) mit Token-Authentifizierung
 - Automatische Erfassung & Verteilung gebannter/erlaubter IPs
-- SQLite-Datenbank (Upgrade auf PostgreSQL möglich)
+- SQLite-Datenbank für IP-Management
 - Konfigurierbare Logik für Bannzeiten, Block- und Freischaltzyklen
 - Logging, Fehlerbehandlung und systemd-Integration
 - Vollautomatische Installation (Server & Client)
-- Sichere Kommunikation per Bearer-Token und Option für HTTPS
+- Authentifizierung per Bearer-Token
 
 ---
 
@@ -25,7 +25,7 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
 - Bietet REST-API auf Port 5000 (Standard)
 - Hält gebannte/erlaubte IPs in SQLite-Datenbank
 - Authentifiziert Clients per Bearer-Token
-- Kann als systemd-Service betrieben werden
+- Wird als systemd-Service betrieben
 - Beispielkonfig & automatische Token-Generierung für mehrere Clients
 
 ### Client
@@ -43,7 +43,7 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
 
 - Ubuntu Server (20.04 oder neuer empfohlen)
 - Python 3.x
-- (optional, aber empfohlen: root-Rechte für Installation)
+- root-Rechte für Installation
 
 ---
 
@@ -55,7 +55,7 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
     chmod +x install_server.sh
     ./install_server.sh
     ```
-3. Trage Tokens und Konfiguration nach Bedarf in `/opt/fail2bansync/serverconfig.txt` ein.
+3. Trage Tokens und Konfiguration nach Bedarf in `/opt/fail2bansync/serverconfig.ini` ein.
 
 4. Prüfe den Status:
     ```bash
@@ -74,12 +74,13 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
     chmod +x install_client.sh
     ./install_client.sh
     ```
-3. Trage den für diesen Client bestimmten Token in `/opt/fail2bansync-client/clientconfig.txt` unter `[auth]` ein.
+3. Trage die Server-IP und den Token in `/opt/fail2bansync-client/clientconfig.ini` ein.
 
 4. Prüfe Cronjob und Log:
     ```bash
     crontab -l
     tail -f /opt/fail2bansync-client/client_cron.log
+    tail -f /opt/fail2bansync-client/client.log
     ```
 
 ---
@@ -89,14 +90,12 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
 - **Empfohlen:**  
   Betreibe die Server-API immer hinter NGINX/Apache mit HTTPS.
 - Verwahre die Tokens sicher und lösche nicht mehr benötigte Tokens aus der Konfig.
-- Backup der Datenbank regelmäßig durchführen (`ip_management.db` bzw. PostgreSQL).
+- Backup der Datenbank regelmäßig durchführen (`ip_management.db`).
 
 ---
 
 ## Erweiterung & Anpassung
 
-- Für hohe Last: Wechsel auf Gunicorn und PostgreSQL.
-- Für eigene Authentifizierung/Rollen: Anpassung der Token-Logik im Server möglich.
 - Einfaches Hinzufügen weiterer Clients durch neue Tokens.
 
 ---
@@ -104,15 +103,15 @@ Das System besteht aus einer serverseitigen REST-API mit Token-Authentifizierung
 ## Fehlerbehebung
 
 - **Server-Logs:** `/opt/fail2bansync/server.log`
-- **Client-Logs:** `/opt/fail2bansync-client/client_cron.log`
+- **Client-Logs:** `/opt/fail2bansync-client/client.log`
 - **Service-Status:** `sudo systemctl status fail2bansync-server`
-- **Token falsch?** → HTTP 401 Fehler beim Client
+- **Token falsch?** → HTTP 401 Fehler
 
 ---
 
 ## Upgrade
 
-- Bei neuer Version einfach die jeweilige `server.py` bzw. `client.py` ersetzen und Service/Cronjob läuft weiter.
+- Bei neuer Version entweder die Datei `server.py` ersetzen und das Service neu starten oder die Datei `client.py` ersetzen, wobei hier der Cronjob einfach weiter läuft.
 - Neue Tokens können jederzeit in der Server-Konfiguration ergänzt werden.
 
 ---

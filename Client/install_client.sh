@@ -3,9 +3,9 @@
 # Zielverzeichnis für den Client
 INSTALL_DIR="/opt/fail2bansync-client"
 CLIENT_FILE="client.py"
-CONFIG_FILE="clientconfig.txt"
+CONFIG_FILE="clientconfig.ini"
 
-echo "==== Fail2BanSync Client Installer ===="
+echo "Fail2BanSync Client Installer"
 echo "Installationsverzeichnis: $INSTALL_DIR"
 echo
 

@@ -32,7 +32,7 @@ chmod +x install_server.sh
 Das Script erledigt:
 - Systembenutzer & Ordner anlegen (`/opt/fail2bansync`)
 - `server.py` dorthin kopieren
-- 9 Tokens erzeugen und in `serverconfig.txt` eintragen
+- 9 Tokens erzeugen und in `serverconfig.ini` eintragen
 - Abhängigkeiten installieren (`flask`, `flask_httpauth`)
 - Service als `fail2bansync-server` aktivieren & starten
 
@@ -46,7 +46,7 @@ sudo systemctl status fail2bansync-server
 
 ## Konfiguration
 
-- Hauptkonfig: `/opt/fail2bansync/serverconfig.txt`
+- Hauptkonfig: `/opt/fail2bansync/serverconfig.ini`
 - Beispiel:
     ```ini
     [DEFAULT]
@@ -75,7 +75,7 @@ sudo systemctl status fail2bansync-server
 | `sudo systemctl restart fail2bansync-server` | Server neustarten |
 | `sudo systemctl status fail2bansync-server`  | Status anzeigen   |
 
-Nach jeder Änderung an `server.py` oder `serverconfig.txt` bitte den Service neustarten.
+Nach jeder Änderung an `server.py` oder `serverconfig.ini` bitte den Service neustarten.
 
 ---
 
@@ -88,12 +88,12 @@ Nach jeder Änderung an `server.py` oder `serverconfig.txt` bitte den Service ne
 
 ## Client-Anbindung
 
-Am Ende der Installation gibt das Script 9 `[auth]`-Blöcke für `clientconfig.txt` aus – einer für jeden Client (1–9).
+Am Ende der Installation gibt das Script 9 `[auth]`-Blöcke für `clientconfig.ini` aus – einer für jeden Client (1–9).
 
 **Für jeden Client:**
 ```ini
 [auth]
-token = <EINZELNER_TOKEN_AUS_SERVERCONFIG.TXT>
+token = <EINZELNER_TOKEN_AUS_SERVERCONFIG.INI>
 ```
 
 ---

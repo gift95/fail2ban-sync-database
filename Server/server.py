@@ -29,8 +29,8 @@ def load_config():
         }
     })
 
-    if os.path.exists('serverconfig.txt'):
-        config.read('serverconfig.txt')
+    if os.path.exists('serverconfig.ini'):
+        config.read('serverconfig.ini')
         
     tokens = {}
     if 'api_tokens' in config:

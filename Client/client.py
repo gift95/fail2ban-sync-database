@@ -31,8 +31,8 @@ def load_config():
     config = configparser.ConfigParser()
     config.read_dict({'DEFAULT': DEFAULT_CLIENT_CONFIG})
 
-    if os.path.exists('clientconfig.txt'):
-        config.read('clientconfig.txt')
+    if os.path.exists('clientconfig.ini'):
+        config.read('clientconfig.ini')
 
     token = ""
     if config.has_option('auth', 'token'):

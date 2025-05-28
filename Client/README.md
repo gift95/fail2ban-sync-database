@@ -41,13 +41,13 @@ chmod +x install_client.sh
 
 Das Script erledigt:
 - Anlage von `/opt/fail2bansync-client`
-- Kopieren von `client.py` und Anlegen einer Beispiel-Konfiguration `clientconfig.txt`
+- Kopieren von `client.py` und Anlegen einer Beispiel-Konfiguration `clientconfig.ini`
 - Installation der Python-Abhängigkeit `requests`
 - Einrichten eines Cronjobs für automatische Ausführung jede Minute
 
 ### 3. Konfiguration
 
-Öffne `/opt/fail2bansync-client/clientconfig.txt`  
+Öffne `/opt/fail2bansync-client/clientconfig.ini`  
 und trage die IP-Adresse des Servers in den `[host]`-Block sowie den zu deinem Client passenden Token in den `[auth]`-Block ein.
 
 **Beispiel:**
