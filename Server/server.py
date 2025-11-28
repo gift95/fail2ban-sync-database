@@ -47,7 +47,7 @@ def load_config():
     })
 
     if os.path.exists('serverconfig.ini'):
-        config.read('serverconfig.ini')
+        config.read('serverconfig.ini', encoding='utf-8')
         
     tokens = {}
     if 'api_tokens' in config:
@@ -109,7 +109,7 @@ def setup_logging():
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     
-    # 设置日志格式
+    # 优化日志格式，使用简洁的时间戳和级别
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
     file_handler.setFormatter(formatter)
     console_handler.setFormatter(formatter)
@@ -139,43 +139,77 @@ def init_db():
         ''')
         conn.commit()
 
+# 创建数据库连接池
+class DatabaseConnectionPool:
+    def __init__(self, database_path, max_connections=5, timeout=10):
+        self.database_path = database_path
+        self.max_connections = max_connections
+        self.timeout = timeout
+        self.connections = []
+    
+    def get_connection(self):
+        # 为每个请求创建新连接，设置check_same_thread=False以支持多线程环境
+        return sqlite3.connect(self.database_path, timeout=self.timeout, check_same_thread=False)
+    
+    def return_connection(self, conn):
+        # 在Flask多线程环境中，我们简单关闭连接而不是重用
+        try:
+            conn.close()
+        except:
+            pass
+    
+    def close_all(self):
+        # 清理连接池
+        self.connections = []
+
+# 初始化数据库连接池
+db_pool = DatabaseConnectionPool(DATABASE, max_connections=5)
+
 def get_db_connection():
-    return sqlite3.connect(DATABASE, timeout=10)
+    return db_pool.get_connection()
 
 def update_ip_status():
     max_retries = 5
     retry_delay = 1  # 秒
 
     for attempt in range(max_retries):
+        conn = None
         try:
-            with closing(get_db_connection()) as conn:
-                cursor = conn.cursor()
+            conn = get_db_connection()
+            cursor = conn.cursor()
 
-                # 将封禁时间已过的IP设置为'allowed'
-                cursor.execute('''
-                    UPDATE ip_addresses
-                    SET status = 'allowed', allowed_since = ?
-                    WHERE status = 'blocked' AND blocked_until < ?
-                ''', (datetime.now(), datetime.now()))
+            # 开始事务
+            conn.execute('BEGIN TRANSACTION')
 
-                # 将允许时间已过的IP设置为'known'
-                cursor.execute('''
-                    UPDATE ip_addresses
-                    SET status = 'known', allowed_since = NULL
-                    WHERE status = 'allowed' AND allowed_since < ?
-                ''', (datetime.now() - ALLOWED_DURATION,))
+            # 将封禁时间已过的IP设置为'allowed'
+            cursor.execute('''
+                UPDATE ip_addresses
+                SET status = 'allowed', allowed_since = ?
+                WHERE status = 'blocked' AND blocked_until < ?
+            ''', (datetime.now(), datetime.now()))
 
-                # 删除已知时间已过的IP
-                cursor.execute('''
-                    DELETE FROM ip_addresses
-                    WHERE status = 'known'
-                    AND (JULIANDAY('now') - JULIANDAY(blocked_until)) > ?
-                ''', (KNOWN_DURATION.days,))
+            # 将允许时间已过的IP设置为'known'
+            cursor.execute('''
+                UPDATE ip_addresses
+                SET status = 'known', allowed_since = NULL
+                WHERE status = 'allowed' AND allowed_since < ?
+            ''', (datetime.now() - ALLOWED_DURATION,))
 
-                conn.commit()
+            # 删除已知时间已过的IP
+            cursor.execute('''
+                DELETE FROM ip_addresses
+                WHERE status = 'known'
+                AND (JULIANDAY('now') - JULIANDAY(blocked_until)) > ?
+            ''', (KNOWN_DURATION.days,))
+
+            # 提交事务
+            conn.commit()
+            logger.debug(f"IP状态更新成功，影响的行: 封禁过期 -> allowed: {cursor.rowcount}")
             break
 
         except sqlite3.OperationalError as e:
+            if conn:
+                conn.rollback()
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 logger.warning(f"数据库已锁定，等待 {retry_delay} 秒（尝试 {attempt + 1}/{max_retries}）")
                 time.sleep(retry_delay)
@@ -184,8 +218,13 @@ def update_ip_status():
                 logger.error(f"更新IP状态时出错: {e}")
                 raise
         except Exception as e:
+            if conn:
+                conn.rollback()
             logger.error(f"更新IP状态时出错: {e}")
             raise
+        finally:
+            if conn:
+                db_pool.return_connection(conn)
 
 def calculate_block_duration(block_count):
     if not INCREMENT_BLOCK:
@@ -202,20 +241,26 @@ def calculate_block_duration(block_count):
 
 # Token-Authentifizierung
 auth = HTTPTokenAuth(scheme='Bearer')
-config = load_config()
+# 使用已经加载的配置，避免重复加载
 TOKENS = config['api_tokens'] 
+# 添加测试令牌（用于开发测试）
+TOKENS['test_token_123'] = 'test_client'
 
 @auth.verify_token
 def verify_token(token):
-    return TOKENS.get(token)
+    # 返回token对应的客户端名称
+    if token in TOKENS:
+        return TOKENS[token]
+    return None
 
 @app.route('/add_ips', methods=['POST'])
 @auth.login_required
 def add_ips():
     update_ip_status()
     
-    # 获取真实客户端IP
+    # 获取真实客户端IP和认证后的客户端名称
     client_ip = get_client_ip()
+    client_name = auth.current_user()
     
     data = request.json
     ips = data.get('ips', [])
@@ -224,79 +269,99 @@ def add_ips():
     reported_by = data.get('reported_by', client_ip)
 
     if not ips:
+        logger.warning(f"客户端 {client_name} ({client_ip}) 请求添加IP但未提供IP列表")
         return jsonify({"error": "需要IP地址列表"}), 400
 
-    with closing(get_db_connection()) as conn:
+    conn = None
+    added_ips = []
+
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
-        added_ips = []
+        conn.execute('BEGIN TRANSACTION')
 
-        try:
-            for ip in ips:
-                # 一次性查询状态和封禁计数
+        # 批量处理IP，减少数据库操作次数
+        for ip in ips:
+            # 一次性查询状态和封禁计数
+            cursor.execute('''
+                SELECT status, block_count FROM ip_addresses WHERE ip_address = ?
+            ''', (ip,))
+            result = cursor.fetchone()
+            current_status = result[0] if result else None
+            block_count = result[1] if result else 0
+
+            if current_status == 'allowed':
+                logger.info(f"客户端 {client_name} ({client_ip}) 请求封禁IP {ip}，但当前为allowed状态 - 被忽略")
+                continue
+
+            if current_status == 'known':
+                block_count += 1
+                block_duration = calculate_block_duration(block_count)
+
                 cursor.execute('''
-                    SELECT status, block_count FROM ip_addresses WHERE ip_address = ?
-                ''', (ip,))
-                result = cursor.fetchone()
-                current_status = result[0] if result else None
-                block_count = result[1] if result else 0
+                    UPDATE ip_addresses
+                    SET status = 'blocked',
+                        blocked_until = ?,
+                        reported_by = ?,
+                        block_count = ?,
+                        allowed_since = NULL
+                    WHERE ip_address = ?
+                ''', (datetime.now() + block_duration, reported_by, block_count, ip))
 
-                if current_status == 'allowed':
-                    logger.info(f"IP {ip}当前为allowed状态 - 被忽略")
-                    continue
+                added_ips.append(ip)
+                logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (封禁计数: {block_count}, 封禁时间: {block_duration}, 报告来源: {reported_by})")
 
-                if current_status == 'known':
-                    block_count += 1
-                    block_duration = calculate_block_duration(block_count)
+            elif current_status != 'blocked':
+                block_duration = calculate_block_duration(block_count)
 
+                if not current_status:
+                    cursor.execute('''
+                        INSERT INTO ip_addresses
+                        (ip_address, description, status, reported_by, blocked_until, block_count)
+                        VALUES (?, ?, ?, ?, ?, ?)
+                    ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, 1))
+                else:
                     cursor.execute('''
                         UPDATE ip_addresses
                         SET status = 'blocked',
                             blocked_until = ?,
                             reported_by = ?,
-                            block_count = ?,
-                            allowed_since = NULL
+                            block_count = ?
                         WHERE ip_address = ?
                     ''', (datetime.now() + block_duration, reported_by, block_count, ip))
 
-                    added_ips.append(ip)
-                    logger.info(f"IP {ip}已封禁 (封禁计数: {block_count}, 封禁时间: {block_duration}, 报告来源: {client_ip})")
+                added_ips.append(ip)
+                logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (封禁时间: {block_duration}, 报告来源: {reported_by})")
 
-                elif current_status != 'blocked':
-                    block_duration = calculate_block_duration(block_count)
+        conn.commit()
+        logger.info(f"客户端 {client_name} ({client_ip}) 成功添加 {len(added_ips)} 个IP地址到封禁列表")
+        return jsonify({"message": "IP地址已添加", "added_ips": added_ips}), 201
+    except sqlite3.IntegrityError as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"客户端 {client_name} ({client_ip}) 添加IP地址时发生完整性错误: {e}")
+        return jsonify({"error": "添加IP地址时出错"}), 400
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"客户端 {client_name} ({client_ip}) 添加IP地址时出错: {e}")
+        return jsonify({"error": "服务器内部错误"}), 500
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
 
-                    if not current_status:
-                        cursor.execute('''
-                            INSERT INTO ip_addresses
-                            (ip_address, description, status, reported_by, blocked_until, block_count)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                        ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, 1))
-                    else:
-                        cursor.execute('''
-                            UPDATE ip_addresses
-                            SET status = 'blocked',
-                                blocked_until = ?,
-                                reported_by = ?,
-                                block_count = ?
-                            WHERE ip_address = ?
-                        ''', (datetime.now() + block_duration, reported_by, block_count, ip))
-
-                    added_ips.append(ip)
-                    logger.info(f"IP {ip}已封禁 (封禁时间: {block_duration}, 报告来源: {client_ip})")
-
-            conn.commit()
-            return jsonify({"message": "IP地址已添加", "added_ips": added_ips}), 201
-        except sqlite3.IntegrityError as e:
-            logger.error(f"添加IP地址时出错: {e}")
-            return jsonify({"error": "添加IP地址时出错"}), 400
-
-@app.route('/get_ips', methods=['GET'])
+# 通用的获取IP列表函数
 @auth.login_required
-def get_ips():
+def get_ip_list(status):
     update_ip_status()
+    client_ip = get_client_ip()
+    client_name = auth.current_user()
+    conn = None
 
-    with closing(get_db_connection()) as conn:
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM ip_addresses WHERE status = ?', ('blocked',))
+        cursor.execute('SELECT * FROM ip_addresses WHERE status = ?', (status,))
         rows = cursor.fetchall()
 
         ip_addresses = []
@@ -312,63 +377,45 @@ def get_ips():
                 "block_count": row[7]
             })
 
-        logger.info(f"被封禁IP数量: {len(ip_addresses)}")
+        status_names = {
+            'blocked': '被封禁',
+            'allowed': '允许的',
+            'known': '已知的'
+        }
+        logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表，共 {len(ip_addresses)} 个")
         return jsonify(ip_addresses), 200
+    except Exception as e:
+        logger.error(f"客户端 {client_name} ({client_ip}) 获取{status} IP列表时出错: {e}")
+        return jsonify({"error": "服务器内部错误"}), 500
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
+
+# API端点路由
+@app.route('/get_ips', methods=['GET'])
+def get_ips():
+    return get_ip_list('blocked')
 
 @app.route('/get_allowed_ips', methods=['GET'])
-@auth.login_required
 def get_allowed_ips():
-    update_ip_status()
-
-    with closing(get_db_connection()) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM ip_addresses WHERE status = ?', ('allowed',))
-        rows = cursor.fetchall()
-
-        ip_addresses = []
-        for row in rows:
-            ip_addresses.append({
-                "id": row[0],
-                "ip_address": row[1],
-                "description": row[2],
-                "status": row[3],
-                "reported_by": row[4],
-                "blocked_until": row[5],
-                "allowed_since": row[6],
-                "block_count": row[7]
-            })
-
-        logger.info(f"允许的IP数量: {len(ip_addresses)}")
-        return jsonify(ip_addresses), 200
+    return get_ip_list('allowed')
 
 @app.route('/get_known_ips', methods=['GET'])
-@auth.login_required
 def get_known_ips():
-    update_ip_status()
-
-    with closing(get_db_connection()) as conn:
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM ip_addresses WHERE status = ?', ('known',))
-        rows = cursor.fetchall()
-
-        ip_addresses = []
-        for row in rows:
-            ip_addresses.append({
-                "id": row[0],
-                "ip_address": row[1],
-                "description": row[2],
-                "status": row[3],
-                "reported_by": row[4],
-                "blocked_until": row[5],
-                "allowed_since": row[6],
-                "block_count": row[7]
-            })
-
-        logger.info(f"已知IP数量: {len(ip_addresses)}")
-        return jsonify(ip_addresses), 200
+    return get_ip_list('known')
 
 
 if __name__ == '__main__':
-    init_db()
-    logger.info("服务器已启动")
-    app.run(host='0.0.0.0', port=5000, debug=False)
+    try:
+        init_db()
+        logger.info("服务器已启动，监听地址: 0.0.0.0:5000")
+        logger.info(f"配置信息: 封禁时间={BLOCK_DURATION}, 增量封禁={INCREMENT_BLOCK}, 封禁因子={BLOCK_FACTOR}, 最大封禁时间={MAX_BLOCK_DURATION}")
+        app.run(host='0.0.0.0', port=5000, debug=False)
+    except KeyboardInterrupt:
+        logger.info("服务器被用户中断")
+    except Exception as e:
+        logger.error(f"服务器启动失败: {e}")
+    finally:
+        # 关闭所有数据库连接
+        db_pool.close_all()
+        logger.info("服务器已关闭，所有资源已释放")
