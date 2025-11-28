@@ -372,13 +372,17 @@ def get_allowed_ips(logger=None, server_url=None, token=None):
 # send_banned_ips函数已在文件上方定义
 
 def main():
-    # 初始化基本日志记录器
-    basic_logger = logging.getLogger('ip_client_basic')
-    basic_logger.setLevel(logging.INFO)
-    console_handler = logging.StreamHandler()
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    console_handler.setFormatter(formatter)
-    basic_logger.addHandler(console_handler)
+    # 首先加载配置，获取日志设置
+    config = load_config()
+    
+    # 使用setup_logging函数配置完整的日志系统（包括文件和控制台）
+    log_config = config.get('logging', {})
+    log_file = log_config.get('log_file', 'client.log')
+    max_bytes = log_config.get('max_bytes', '1048576')
+    backup_count = log_config.get('backup_count', '3')
+    
+    # 调用setup_logging函数创建带有文件和控制台处理器的logger
+    basic_logger = setup_logging(log_file, max_bytes, backup_count)
     
     # 声明使用全局缓存变量并确保正确初始化
     global _banned_ips_cache, _cache_timestamp
@@ -388,8 +392,7 @@ def main():
         _cache_timestamp = time.time()
     
     try:
-        # 加载配置
-        config = load_config(basic_logger)
+        # 配置已经在函数开始处加载
         
         if not config:
             basic_logger.error("无法加载配置文件")
