@@ -44,7 +44,11 @@ echo "client.py 下载成功"
 
 # 4. 从远程URL下载配置文件
 echo "正在检查配置文件是否存在..."
+# 初始化FIRST_RUN变量为false
+FIRST_RUN=false
+
 if [ ! -f "$INSTALL_DIR/clientconfig.ini" ]; then
+    FIRST_RUN=true  # 配置文件不存在，将首次运行标志设为true
     echo "配置文件不存在，正在从远程服务器下载配置文件..."
     if ! curl -s  -o "$INSTALL_DIR/clientconfig.ini" "$CONFIG_FILE"; then
         echo "警告: 下载配置文件失败，将创建默认配置文件"
@@ -85,10 +89,29 @@ if [ -n "$TOKEN" ]; then
     echo "配置文件已使用提供的令牌更新"
 fi
 
-# 仅当配置文件是新创建的或者命令行提供了非默认服务器地址时才更新服务器配置
-# 默认服务器地址是192.168.0.1:5000
+# 完全重新设计服务器配置更新逻辑
+# 1. 只有在以下情况下才更新服务器配置：
+#    - 用户明确提供了非默认的服务器地址作为命令行参数
+#    - 配置文件是新创建的（之前不存在）
 DEFAULT_SERVER="192.168.0.1:5000"
-if [ "$SERVER_ADDR" != "$DEFAULT_SERVER" ] || [ ! -f "$INSTALL_DIR/clientconfig.ini.old" ]; then
+
+# 检查是否应该更新服务器配置
+should_update_server=false
+
+# 检查是否是首次运行（配置文件刚创建）
+if [ "$FIRST_RUN" = true ]; then
+    should_update_server=true
+fi
+
+# 检查用户是否提供了非默认的服务器地址
+# 通过检查是否显式传递了参数来判断
+if [ $# -gt 0 ] && [ "$1" != "" ]; then
+    # 用户显式提供了服务器地址参数
+    should_update_server=true
+fi
+
+# 根据条件更新服务器配置
+if [ "$should_update_server" = true ]; then
     echo "更新服务器配置..."
     sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
     sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
@@ -100,8 +123,9 @@ if [ "$SERVER_ADDR" != "$DEFAULT_SERVER" ] || [ ! -f "$INSTALL_DIR/clientconfig.
     fi
     echo "服务器配置已更新"
 else
-    echo "使用默认服务器地址或配置文件已存在且未更改，保持现有服务器配置不变"
+    echo "用户未提供服务器地址或使用默认地址，保持现有服务器配置不变"
 fi
+
 chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 
 # 5. 安装依赖（包括socket模块，但socket是Python标准库，不需要额外安装）
