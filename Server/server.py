@@ -11,11 +11,11 @@ from contextlib import closing
 from flask_httpauth import HTTPTokenAuth
 
 
-# Initialisierung der Flask-Anwendung
+# 初始化Flask应用
 app = Flask(__name__)
 DATABASE = 'ip_management.db'
 
-# Konfiguration laden (einmalig beim Start)
+# 加载配置（启动时一次性加载）
 def load_config():
     config = configparser.ConfigParser()
     config.read_dict({
@@ -47,7 +47,7 @@ def load_config():
         'api_tokens': tokens
     }
 
-# Zeitkonvertierung
+# 时间转换
 def parse_time(time_str):
     time_str = time_str.strip().lower()
     if time_str.endswith('m'):
@@ -59,9 +59,9 @@ def parse_time(time_str):
     elif time_str.endswith('w'):
         return timedelta(weeks=int(time_str[:-1]))
     else:
-        return timedelta(minutes=3)  # Standardwert 3 Minuten
+        return timedelta(minutes=3)  # 默认值3分钟
 
-# Konfiguration und Logger initialisieren
+# 初始化配置和日志器
 config = load_config()
 BLOCK_DURATION = parse_time(config['bantime'])
 INCREMENT_BLOCK = config['bantime_increment']
@@ -70,7 +70,7 @@ MAX_BLOCK_DURATION = parse_time(config['bantime_maxtime'])
 KNOWN_DURATION = parse_time(config['known_duration'])
 ALLOWED_DURATION = parse_time(config['allowed_duration'])
 
-# Logging einrichten
+# 设置日志
 def setup_logging():
     logger = logging.getLogger('ip_server')
     logger.setLevel(logging.INFO)
@@ -111,28 +111,28 @@ def get_db_connection():
 
 def update_ip_status():
     max_retries = 5
-    retry_delay = 1  # Sekunden
+    retry_delay = 1  # 秒
 
     for attempt in range(max_retries):
         try:
             with closing(get_db_connection()) as conn:
                 cursor = conn.cursor()
 
-                # IPs, deren Blockzeit abgelaufen ist, auf 'allowed' setzen
+                # 将封禁时间已过的IP设置为'allowed'
                 cursor.execute('''
                     UPDATE ip_addresses
                     SET status = 'allowed', allowed_since = ?
                     WHERE status = 'blocked' AND blocked_until < ?
                 ''', (datetime.now(), datetime.now()))
 
-                # IPs, deren Allowed-Zeit abgelaufen ist, auf 'known' setzen
+                # 将允许时间已过的IP设置为'known'
                 cursor.execute('''
                     UPDATE ip_addresses
                     SET status = 'known', allowed_since = NULL
                     WHERE status = 'allowed' AND allowed_since < ?
                 ''', (datetime.now() - ALLOWED_DURATION,))
 
-                # IPs, deren Known-Zeit abgelaufen ist, löschen
+                # 删除已知时间已过的IP
                 cursor.execute('''
                     DELETE FROM ip_addresses
                     WHERE status = 'known'
@@ -144,24 +144,24 @@ def update_ip_status():
 
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
-                logger.warning(f"Datenbank gesperrt, warte {retry_delay} Sekunden (Versuch {attempt + 1}/{max_retries})")
+                logger.warning(f"数据库已锁定，等待 {retry_delay} 秒（尝试 {attempt + 1}/{max_retries}）")
                 time.sleep(retry_delay)
-                retry_delay *= 2  # Exponentielles Backoff
+                retry_delay *= 2  # 指数退避
             else:
-                logger.error(f"Fehler beim Aktualisieren der IP-Status: {e}")
+                logger.error(f"更新IP状态时出错: {e}")
                 raise
         except Exception as e:
-            logger.error(f"Fehler beim Aktualisieren der IP-Status: {e}")
+            logger.error(f"更新IP状态时出错: {e}")
             raise
 
 def calculate_block_duration(block_count):
     if not INCREMENT_BLOCK:
         return BLOCK_DURATION
 
-    # Exponentielle Blockzeit basierend auf der Anzahl der Vorfälle
+    # 基于事件数量的指数封禁时间
     duration = BLOCK_DURATION * (BLOCK_FACTOR ** max(0, block_count - 1))
 
-    # Obergrenze beachten
+    # 考虑上限
     if duration > MAX_BLOCK_DURATION:
         return MAX_BLOCK_DURATION
     return duration
@@ -188,7 +188,7 @@ def add_ips():
     reported_by = data.get('reported_by', '')
 
     if not ips:
-        return jsonify({"error": "Liste der IP-Adressen ist erforderlich"}), 400
+        return jsonify({"error": "需要IP地址列表"}), 400
 
     with closing(get_db_connection()) as conn:
         cursor = conn.cursor()
@@ -196,7 +196,7 @@ def add_ips():
 
         try:
             for ip in ips:
-                # Status und Block-Count in einer Abfrage holen
+                # 一次性查询状态和封禁计数
                 cursor.execute('''
                     SELECT status, block_count FROM ip_addresses WHERE ip_address = ?
                 ''', (ip,))
@@ -205,7 +205,7 @@ def add_ips():
                 block_count = result[1] if result else 0
 
                 if current_status == 'allowed':
-                    logger.info(f"IP {ip} ist gerade allowed - wird ignoriert")
+                    logger.info(f"IP {ip}当前为allowed状态 - 被忽略")
                     continue
 
                 if current_status == 'known':
@@ -223,7 +223,7 @@ def add_ips():
                     ''', (datetime.now() + block_duration, reported_by, block_count, ip))
 
                     added_ips.append(ip)
-                    logger.info(f"IP {ip} geblockt (Block-Count: {block_count}, Blockzeit: {block_duration})")
+                    logger.info(f"IP {ip}已封禁 (封禁计数: {block_count}, 封禁时间: {block_duration})")
 
                 elif current_status != 'blocked':
                     block_duration = calculate_block_duration(block_count)
@@ -245,13 +245,13 @@ def add_ips():
                         ''', (datetime.now() + block_duration, reported_by, block_count, ip))
 
                     added_ips.append(ip)
-                    logger.info(f"IP {ip} geblockt (Blockzeit: {block_duration})")
+                    logger.info(f"IP {ip}已封禁 (封禁时间: {block_duration})")
 
             conn.commit()
-            return jsonify({"message": "IP-Adressen hinzugefügt", "added_ips": added_ips}), 201
+            return jsonify({"message": "IP地址已添加", "added_ips": added_ips}), 201
         except sqlite3.IntegrityError as e:
-            logger.error(f"Fehler beim Hinzufügen der IP-Adressen: {e}")
-            return jsonify({"error": "Fehler beim Hinzufügen der IP-Adressen"}), 400
+            logger.error(f"添加IP地址时出错: {e}")
+            return jsonify({"error": "添加IP地址时出错"}), 400
 
 @app.route('/get_ips', methods=['GET'])
 @auth.login_required
@@ -276,7 +276,7 @@ def get_ips():
                 "block_count": row[7]
             })
 
-        logger.info(f"Anzahl der geblockten IPs: {len(ip_addresses)}")
+        logger.info(f"被封禁IP数量: {len(ip_addresses)}")
         return jsonify(ip_addresses), 200
 
 @app.route('/get_allowed_ips', methods=['GET'])
@@ -302,7 +302,7 @@ def get_allowed_ips():
                 "block_count": row[7]
             })
 
-        logger.info(f"Anzahl der erlaubten IPs: {len(ip_addresses)}")
+        logger.info(f"允许的IP数量: {len(ip_addresses)}")
         return jsonify(ip_addresses), 200
 
 @app.route('/get_known_ips', methods=['GET'])
@@ -328,11 +328,11 @@ def get_known_ips():
                 "block_count": row[7]
             })
 
-        logger.info(f"Anzahl der bekannten IPs: {len(ip_addresses)}")
+        logger.info(f"已知IP数量: {len(ip_addresses)}")
         return jsonify(ip_addresses), 200
 
 
 if __name__ == '__main__':
     init_db()
-    logger.info("Server gestartet")
+    logger.info("服务器已启动")
     app.run(host='0.0.0.0', port=5000, debug=False)

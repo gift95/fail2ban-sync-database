@@ -1,39 +1,59 @@
 #!/bin/bash
 
-# Zielverzeichnis für den Client
+# 客户端安装目录
 INSTALL_DIR="/opt/fail2bansync-client"
-CLIENT_FILE="client.py"
-CONFIG_FILE="clientconfig.ini"
+CLIENT_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/client.py"
+CONFIG_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/clientconfig.ini"
 
-echo "Fail2BanSync Client Installer"
-echo "Installationsverzeichnis: $INSTALL_DIR"
+# 从命令行参数获取服务器地址和令牌
+SERVER_ADDR="${1:-192.168.0.1:5000}"
+TOKEN="${2:-}"
+
+# 分离host和port
+HOST=$(echo "$SERVER_ADDR" | cut -d':' -f1)
+PORT=$(echo "$SERVER_ADDR" | cut -d':' -f2 || echo "5000")
+
+echo "Fail2BanSync 客户端安装器"
+echo "安装目录: $INSTALL_DIR"
+echo "服务器地址: $SERVER_ADDR"
+if [ -n "$TOKEN" ]; then
+    echo "令牌: 已提供"
+fi
 echo
 
-# 1. Python und pip installieren (falls nötig)
+# 1. 安装Python和pip（如需）
 sudo apt update
 sudo apt install -y python3 python3-pip
 
-# Curl installieren (falls nicht vorhanden)
+# 安装Curl（如不存在）
 sudo apt install -y curl
 
-# 2. Zielordner anlegen
+# 2. 创建安装目录
 sudo mkdir -p "$INSTALL_DIR"
 sudo chown "$USER":"$USER" "$INSTALL_DIR"
 
-# 3. client.py aus aktuellem Verzeichnis kopieren
-if [ ! -f "$CLIENT_FILE" ]; then
-    echo "Fehler: $CLIENT_FILE nicht im aktuellen Verzeichnis gefunden!"
+# 3. 从远程URL下载client.py（强制覆盖）
+echo "正在从远程服务器下载client.py..."
+if ! curl -s -f -o "$INSTALL_DIR/client.py" "$CLIENT_FILE"; then
+    echo "错误: 下载client.py失败!"
     exit 1
 fi
-cp "$CLIENT_FILE" "$INSTALL_DIR/$CLIENT_FILE"
-chown "$USER":"$USER" "$INSTALL_DIR/$CLIENT_FILE"
+echo "client.py 已下载并强制覆盖（如果文件已存在）"
+chown "$USER":"$USER" "$INSTALL_DIR/client.py"
+echo "client.py 下载成功"
 
-# 4. Beispiel-Konfig anlegen, falls nicht vorhanden
-if [ ! -f "$INSTALL_DIR/$CONFIG_FILE" ]; then
-    cat > "$INSTALL_DIR/$CONFIG_FILE" <<EOF
+# 设置执行权限
+chmod +x "$INSTALL_DIR/client.py"
+
+# 4. 从远程URL下载配置文件
+echo "正在从远程服务器下载配置文件..."
+if ! curl -s  -o "$INSTALL_DIR/clientconfig.ini" "$CONFIG_FILE"; then
+    echo "警告: 下载配置文件失败，将创建默认配置文件"
+    # 创建默认配置文件
+    cat > "$INSTALL_DIR/clientconfig.ini" <<EOF
 [server]
-host = 192.168.0.1
-port = 5000
+host = $HOST
+port = $PORT
 protocol = http
 
 [logging]
@@ -45,24 +65,39 @@ backup_count = 3
 jail = sshd
 
 [auth]
-token = TOKEN_HIER_EINFUEGEN
+token = ${TOKEN:-在此添加令牌}
 EOF
-    chown "$USER":"$USER" "$INSTALL_DIR/$CONFIG_FILE"
+else
+    echo "配置文件下载成功"
+    # 如果提供了令牌，更新配置文件中的令牌
+    if [ -n "$TOKEN" ]; then
+        sed -i "s/token = .*/token = $TOKEN/" "$INSTALL_DIR/clientconfig.ini"
+        echo "配置文件已使用提供的令牌更新"
+    fi
+    # 更新服务器地址和端口
+    sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
+    sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
 fi
+chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 
-# 5. Abhängigkeiten installieren
+# 5. 安装依赖
 pip3 install --user requests
 
-# 6. Cronjob anlegen
-CRON_CMD="cd $INSTALL_DIR && /usr/bin/python3 $INSTALL_DIR/$CLIENT_FILE >> $INSTALL_DIR/client_cron.log 2>&1"
-# Prüfe, ob der Cronjob bereits existiert
+# 6. 创建定时任务
+CRON_CMD="cd $INSTALL_DIR && /usr/bin/python3 $INSTALL_DIR/client.py >> $INSTALL_DIR/client_cron.log 2>&1"
+# 检查定时任务是否已存在
 ( crontab -l 2>/dev/null | grep -Fv "$CRON_CMD" ; echo "* * * * * $CRON_CMD" ) | crontab -
 
 echo
-echo "Fertig!"
-echo "Client ist installiert in: $INSTALL_DIR"
-echo "Bitte trage die Korrekte IP Adresse des Hosts in [server] host=... sowie den passenden Token in [auth] token=... in $INSTALL_DIR/$CONFIG_FILE ein."
-echo "Logs findest du in $INSTALL_DIR/client.log"
+echo "完成!"
+echo "客户端已安装在: $INSTALL_DIR"
+if [ -z "$TOKEN" ]; then
+    echo "请在 $INSTALL_DIR/$CONFIG_FILE 中输入相应的令牌 [auth] token=..."
+fi
+echo "日志位于 $INSTALL_DIR/client.log"
 echo
-echo "Client läuft nun automatisch jede Minute als Cronjob."
-echo "Cronjob prüfen: crontab -l"
+echo "客户端现在将作为定时任务每分钟自动运行。"
+echo "检查定时任务: crontab -l"
+echo
+echo "使用方法: $0 <server_host>:<port> <token>"
+echo "示例: $0 192.168.1.100:5000 abcdef123456"

@@ -9,7 +9,7 @@ import os
 import configparser
 from datetime import datetime
 
-# Standard-Konfiguration
+# 默认配置
 DEFAULT_CLIENT_CONFIG = {
     'server': {
         'host': '192.168.1.1',
@@ -27,7 +27,7 @@ DEFAULT_CLIENT_CONFIG = {
 }
 
 def load_config():
-    """Lädt die Konfiguration aus der Datei oder verwendet Standardwerte"""
+    """从文件加载配置或使用默认值"""
     config = configparser.ConfigParser()
     config.read_dict({'DEFAULT': DEFAULT_CLIENT_CONFIG})
 
@@ -85,7 +85,7 @@ def get_banned_ips(jail):
             return iplist
         return output.split()
     except Exception as e:
-        print(f"Fehler beim Abrufen gebannter IPs: {e}")
+        print(f"获取被封禁IP时出错: {e}")
         return []
 
 def get_local_mac_address():
@@ -96,25 +96,25 @@ def get_local_mac_address():
             return mac_address_match.group(1)
         return None
     except Exception as e:
-        print(f"Fehler beim Abrufen der MAC-Adresse: {e}")
+        print(f"获取MAC地址时出错: {e}")
         return None
 
 def send_banned_ips(banned_ips, server_url, mac_address, logger, token):
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'}
     data = {
         'ips': banned_ips,
-        'description': 'Gebannte IPs von fail2ban',
+        'description': '来自fail2ban的被封禁IP',
         'status': 'blocked',
         'reported_by': mac_address
     }
     try:
         response = requests.post(f"{server_url}/add_ips", headers=headers, data=json.dumps(data))
         if response.status_code == 201:
-            logger.info("IPs erfolgreich gesendet.")
+            logger.info("IPs发送成功。")
         else:
-            logger.error(f"Fehler beim Senden der IPs: {response.status_code} - {response.text}")
+            logger.error(f"发送IP时出错: {response.status_code} - {response.text}")
     except requests.RequestException as e:
-        logger.error(f"Fehler beim Senden der Anfrage: {e}")
+        logger.error(f"发送请求时出错: {e}")
 
 def get_unknown_ips(server_url, mac_address, logger, token):
     headers = {'Authorization': f'Bearer {token}'}
@@ -122,10 +122,10 @@ def get_unknown_ips(server_url, mac_address, logger, token):
         response = requests.get(f"{server_url}/get_ips?mac_address={mac_address}", headers=headers)
         if response.status_code == 200:
             return response.json()
-        logger.error(f"Fehler beim Abrufen der IPs: {response.status_code} - {response.text}")
+        logger.error(f"获取IP时出错: {response.status_code} - {response.text}")
         return []
     except requests.RequestException as e:
-        logger.error(f"Fehler beim Senden der Anfrage: {e}")
+        logger.error(f"发送请求时出错: {e}")
         return []
 
 def get_allowed_ips(server_url, logger, token):
@@ -134,27 +134,27 @@ def get_allowed_ips(server_url, logger, token):
         response = requests.get(f"{server_url}/get_allowed_ips", headers=headers)
         if response.status_code == 200:
             return response.json()
-        logger.error(f"Fehler beim Abrufen der allowed IPs: {response.status_code} - {response.text}")
+        logger.error(f"获取允许IP时出错: {response.status_code} - {response.text}")
         return []
     except requests.RequestException as e:
-        logger.error(f"Fehler beim Senden der Anfrage: {e}")
+        logger.error(f"发送请求时出错: {e}")
         return []
 
 def add_ips_to_fail2ban(ips, jail, logger):
     try:
         for ip in ips:
             subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], check=True)
-        logger.info(f"IPs erfolgreich zu Fail2Ban hinzugefügt: {ips}")
+        logger.info(f"IPs已成功添加到Fail2Ban: {ips}")
     except subprocess.CalledProcessError as e:
-        logger.error(f"Fehler beim Hinzufügen der IPs zu Fail2Ban: {e}")
+        logger.error(f"添加IP到Fail2Ban时出错: {e}")
 
 def allow_ips_in_fail2ban(ips, jail, logger):
     try:
         for ip in ips:
             subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], check=True)
-        logger.info(f"IPs erfolgreich in Fail2Ban erlaubt: {ips}")
+        logger.info(f"IPs已在Fail2Ban中被允许: {ips}")
     except subprocess.CalledProcessError as e:
-        logger.error(f"Fehler beim Erlauben der IPs in Fail2Ban: {e}")
+        logger.error(f"在Fail2Ban中允许IP时出错: {e}")
 
 def main():
     try:
@@ -170,34 +170,34 @@ def main():
             int(config['logging']['backup_count'])
         )
 
-        logger.info("Client gestartet")
+        logger.info("客户端已启动")
         mac_address = get_local_mac_address()
         if not mac_address:
-            logger.error("MAC-Adresse konnte nicht ermittelt werden.")
+            logger.error("无法获取MAC地址。")
             return
 
         banned_ips = get_banned_ips(jail)
         if banned_ips:
             send_banned_ips(banned_ips, server_url, mac_address, logger, token)
         else:
-            logger.info("Keine gebannten IPs gefunden.")
+            logger.info("未找到被封禁的IP。")
 
         unknown_ips = get_unknown_ips(server_url, mac_address, logger, token)
         if unknown_ips:
             ip_addresses = [ip['ip_address'] for ip in unknown_ips]
             add_ips_to_fail2ban(ip_addresses, jail, logger)
         else:
-            logger.info("Keine unbekannten IPs gefunden.")
+            logger.info("未找到未知IP。")
 
         allowed_ips = get_allowed_ips(server_url, logger, token)
         if allowed_ips:
             ip_addresses = [ip['ip_address'] for ip in allowed_ips]
             allow_ips_in_fail2ban(ip_addresses, jail, logger)
         else:
-            logger.info("Keine allowed IPs gefunden.")
+            logger.info("未找到允许的IP。")
 
     except Exception as e:
-        print(f"Fehler in der Hauptfunktion: {e}")
+        print(f"主函数出错: {e}")
         raise
 
 if __name__ == '__main__':

@@ -32,10 +32,10 @@ def get_ips(url, token, label):
         if resp.status_code == 200:
             return resp.json()
         else:
-            print(f"Fehler beim Abrufen von {label}: {resp.status_code} - {resp.text}")
+            print(f"获取 {label} 失败: {resp.status_code} - {resp.text}")
             return []
     except Exception as e:
-        print(f"Fehler beim Verbinden zu {label}: {e}")
+        print(f"连接到 {label} 失败: {e}")
         return []
 
 def main():
@@ -59,7 +59,7 @@ def main():
             for ip in data:
                 print(f"ID: {ip['id']} | IP: {ip['ip_address']} | Status: {ip['status']} | Geblockt bis: {ip['blocked_until']} | Erlaubt seit: {ip['allowed_since']} | Block-Count: {ip['block_count']} | Gemeldet von: {ip['reported_by']}")
         else:
-            print("Keine Daten erhalten oder Fehler.")
+            print("未收到数据或发生错误。")
 
 if __name__ == "__main__":
     main()
