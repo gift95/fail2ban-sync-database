@@ -335,30 +335,53 @@ def send_banned_ips(server_url, banned_ips, logger):
 def main():
     # 导入time模块（如果之前没有导入）
     import time
+    import traceback
     
-    # 在main函数开始处添加缓存清理
-    def clear_cache():
-        """清理过期缓存"""
-        current_time = time.time()
-        for jail in list(_cache_timestamp.keys()):
-            if current_time - _cache_timestamp[jail] > CACHE_TTL:
-                _banned_ips_cache.pop(jail, None)
-                _cache_timestamp.pop(jail, None)
+    # 确保在开始时就初始化一个基本的logger，以防配置加载失败
+    basic_logger = logging.getLogger('ip_client_basic')
+    basic_logger.setLevel(logging.INFO)
     
-    # 定期清理缓存
-    clear_cache()
+    # 添加控制台handler
+    if not basic_logger.handlers:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        console_handler.setFormatter(formatter)
+        basic_logger.addHandler(console_handler)
     
     try:
         config = load_config()
-        server_url = config.get('server', {}).get('url', 'http://localhost:5000')
+        
+        # 从配置中获取日志参数
+        log_config = config.get('logging', {})
+        log_file = log_config.get('log_file', 'client.log')
+        max_bytes = log_config.get('max_bytes', '1048576')
+        backup_count = log_config.get('backup_count', '3')
+        
+        # 获取服务器配置
+        server_config = config.get('server', {})
+        protocol = server_config.get('protocol', 'http')
+        host = server_config.get('host', 'localhost')
+        port = server_config.get('port', '5000')
+        server_url = f"{protocol}://{host}:{port}"
+        
         jail = config.get('fail2ban', {}).get('jail', 'sshd')
         
-        # 确保服务器URL末尾没有斜杠，避免URL拼接问题
-        if server_url.endswith('/'):
-            server_url = server_url[:-1]
-        
-        logger = setup_logging()
+        # 初始化正式logger
+        logger = setup_logging(log_file, max_bytes, backup_count)
         logger.info(f"程序启动，服务器URL: {server_url}, Jail: {jail}")
+        
+        # 在main函数开始处添加缓存清理
+        def clear_cache():
+            """清理过期缓存"""
+            current_time = time.time()
+            for jail_name in list(_cache_timestamp.keys()):
+                if current_time - _cache_timestamp[jail_name] > CACHE_TTL:
+                    _banned_ips_cache.pop(jail_name, None)
+                    _cache_timestamp.pop(jail_name, None)
+        
+        # 定期清理缓存
+        clear_cache()
         
         # 获取本地IP地址
         local_ip = get_local_ip_address()
@@ -393,9 +416,14 @@ def main():
         logger.info("程序执行完成")
         
     except Exception as e:
-        logger.error(f"程序执行过程中发生错误: {e}")
-        import traceback
-        logger.error(f"错误堆栈: {traceback.format_exc()}")
+        # 使用basic_logger或尝试使用logger记录错误
+        try:
+            logger.error(f"程序执行过程中发生错误: {e}")
+            logger.error(f"错误堆栈: {traceback.format_exc()}")
+        except (NameError, AttributeError):
+            # 如果logger未定义，使用basic_logger
+            basic_logger.error(f"程序执行过程中发生错误: {e}")
+            basic_logger.error(f"错误堆栈: {traceback.format_exc()}")
 
 # 在文件顶部添加缺少的import
 # 确保在文件开头导入所有必要的模块
