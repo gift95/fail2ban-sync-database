@@ -84,14 +84,23 @@ if [ -n "$TOKEN" ]; then
     sed -i "s/token = .*/token = $TOKEN/" "$INSTALL_DIR/clientconfig.ini"
     echo "配置文件已使用提供的令牌更新"
 fi
-# 更新服务器地址和端口
-sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
-sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
-# 根据端口更新协议
-if [ "$PORT" = "443" ]; then
-    sed -i "s/protocol = .*/protocol = https/" "$INSTALL_DIR/clientconfig.ini"
+
+# 仅当配置文件是新创建的或者命令行提供了非默认服务器地址时才更新服务器配置
+# 默认服务器地址是192.168.0.1:5000
+DEFAULT_SERVER="192.168.0.1:5000"
+if [ "$SERVER_ADDR" != "$DEFAULT_SERVER" ] || [ ! -f "$INSTALL_DIR/clientconfig.ini.old" ]; then
+    echo "更新服务器配置..."
+    sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
+    sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
+    # 根据端口更新协议
+    if [ "$PORT" = "443" ]; then
+        sed -i "s/protocol = .*/protocol = https/" "$INSTALL_DIR/clientconfig.ini"
+    else
+        sed -i "s/protocol = .*/protocol = http/" "$INSTALL_DIR/clientconfig.ini"
+    fi
+    echo "服务器配置已更新"
 else
-    sed -i "s/protocol = .*/protocol = http/" "$INSTALL_DIR/clientconfig.ini"
+    echo "使用默认服务器地址或配置文件已存在且未更改，保持现有服务器配置不变"
 fi
 chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 
