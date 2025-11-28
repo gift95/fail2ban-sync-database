@@ -285,7 +285,7 @@ def add_ips():
     ips = data.get('ips', [])
     description = data.get('description', '')
     status = data.get('status', 'blocked')
-    reported_by = data.get('reported_by', client_ip)
+    reported_by = f"{client_name}@{client_ip}"
 
     if not ips:
         logger.warning(f"客户端 {client_name} ({client_ip}) 请求添加IP但未提供IP列表")
