@@ -4,6 +4,9 @@
 INSTALL_DIR="/opt/fail2bansync"
 SERVER_USER="fail2bansync"
 SERVER_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/server.py"
+# 模板文件URL
+DASHBOARD_TEMPLATE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/templates/dashboard.html"
+LOGIN_TEMPLATE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/templates/login.html"
 SERVICE_NAME="fail2bansync-server"
 
 echo "==== Fail2BanSync 服务器安装器 ===="
@@ -20,9 +23,10 @@ if ! id "$SERVER_USER" &>/dev/null; then
     sudo useradd -r -s /bin/false "$SERVER_USER"
 fi
 
-# 3. 创建安装目录
+# 3. 创建安装目录和templates子目录
 sudo mkdir -p "$INSTALL_DIR"
-sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR"
+sudo mkdir -p "$INSTALL_DIR/templates"
+sudo chown -R "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR"
 
 # 4. 从远程URL下载server.py（强制覆盖）
 echo "正在从远程服务器下载server.py..."
@@ -34,6 +38,21 @@ sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/server.py"
 sudo chmod +x "$INSTALL_DIR/server.py"
 echo "server.py 已下载并强制覆盖（如果文件已存在）"
 echo "server.py 下载成功并设置了执行权限"
+
+# 4.1 下载模板文件（强制覆盖）
+echo "正在下载模板文件..."
+if ! sudo curl -s -f -o "$INSTALL_DIR/templates/dashboard.html" "$DASHBOARD_TEMPLATE"; then
+    echo "错误: 下载dashboard.html失败!"
+    exit 1
+fi
+
+if ! sudo curl -s -f -o "$INSTALL_DIR/templates/login.html" "$LOGIN_TEMPLATE"; then
+    echo "错误: 下载login.html失败!"
+    exit 1
+fi
+
+sudo chown -R "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/templates"
+echo "模板文件已成功下载并设置了正确的所有权"
 
 # 5. 创建示例配置
 if [ ! -f "$INSTALL_DIR/serverconfig.ini" ]; then
