@@ -99,5 +99,6 @@ echo
 echo "客户端现在将作为定时任务每分钟自动运行。"
 echo "检查定时任务: crontab -l"
 echo
-echo "使用方法: $0 <server_host>:<port> <token>"
-echo "示例: $0 192.168.1.100:5000 abcdef123456"
+SCRIPT_NAME="install_client.sh"
+echo "使用方法: $SCRIPT_NAME <server_host>:<port> <token>"
+echo "示例: $SCRIPT_NAME 192.168.1.100:5000 abcdef123456"
