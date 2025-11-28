@@ -58,11 +58,17 @@ echo "正在从远程服务器下载配置文件..."
 if ! curl -s  -o "$INSTALL_DIR/clientconfig.ini" "$CONFIG_FILE"; then
     echo "警告: 下载配置文件失败，将创建默认配置文件"
     # 创建默认配置文件
+    # 根据端口设置协议
+    if [ "$PORT" = "443" ]; then
+        PROTOCOL="https"
+    else
+        PROTOCOL="http"
+    fi
     cat > "$INSTALL_DIR/clientconfig.ini" <<EOF
 [server]
 host = $HOST
 port = $PORT
-protocol = http
+protocol = $PROTOCOL
 
 [logging]
 log_file = client.log
@@ -85,6 +91,12 @@ else
     # 更新服务器地址和端口
     sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
     sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
+    # 根据端口更新协议
+    if [ "$PORT" = "443" ]; then
+        sed -i "s/protocol = .*/protocol = https/" "$INSTALL_DIR/clientconfig.ini"
+    else
+        sed -i "s/protocol = .*/protocol = http/" "$INSTALL_DIR/clientconfig.ini"
+    fi
 fi
 chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 
