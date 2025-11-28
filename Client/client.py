@@ -90,21 +90,45 @@ def setup_logging(log_file, max_bytes, backup_count):
     
     return logger
 
+# 添加全局变量用于缓存已获取的封禁IP列表，减少重复调用
+_banned_ips_cache = {}
+_cache_timestamp = {}
+CACHE_TTL = 30  # 缓存有效期（秒）
+
 def get_banned_ips(jail):
+    """
+    获取Fail2Ban中指定jail的封禁IP列表
+    使用缓存机制减少频繁调用fail2ban-client的开销
+    """
+    current_time = time.time()
+    
+    # 检查缓存是否存在且未过期
+    if jail in _banned_ips_cache and jail in _cache_timestamp:
+        if current_time - _cache_timestamp[jail] < CACHE_TTL:
+            return _banned_ips_cache[jail]
+    
+    # 缓存不存在或已过期，重新获取数据
     try:
-        result = subprocess.run(
-            ['fail2ban-client', 'get', jail, 'banned'],
-            capture_output=True, text=True, check=True
-        )
-        output = result.stdout.strip()
-        if output == 'None':
-            return []
-        if output.startswith("[") and output.endswith("]"):
-            iplist = ast.literal_eval(output)
-            return iplist
-        return output.split()
-    except Exception as e:
-        print(f"获取被封禁IP时出错: {e}")
+        result = subprocess.run(['fail2ban-client', 'status', jail], 
+                               stdout=subprocess.PIPE, 
+                               stderr=subprocess.PIPE, 
+                               text=True, 
+                               check=True)
+        
+        # 使用正则表达式提取IP地址，效率高于逐行解析
+        import re
+        ip_pattern = r'[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+'
+        ips = re.findall(ip_pattern, result.stdout)
+        
+        # 更新缓存
+        _banned_ips_cache[jail] = ips
+        _cache_timestamp[jail] = current_time
+        
+        return ips
+    except subprocess.CalledProcessError:
+        # 重置该jail的缓存，避免缓存错误数据
+        _banned_ips_cache.pop(jail, None)
+        _cache_timestamp.pop(jail, None)
         return []
 
 def get_local_ip_address():
@@ -134,138 +158,256 @@ def send_banned_ips(banned_ips, server_url, ip_address, logger, token):
     except requests.RequestException as e:
         logger.error(f"发送请求时出错: {e}")
 
-def get_unknown_ips(server_url, ip_address, logger, token):
-    headers = {'Authorization': f'Bearer {token}'}
+def get_unknown_ips(server_url, ip_address, logger, page_size=100):
+    """
+    从服务器获取未知IP列表
+    支持分页获取，以处理大量IP数据
+    """
     try:
-        logger.info(f"正在获取未知IP，服务器URL: {server_url}, IP地址: {ip_address}")
-        response = requests.get(f"{server_url}/get_ips?ip_address={ip_address}", headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"获取未知IP成功，响应数据: {data}")
-            return data
+        unknown_ips = []
+        page = 1
+        
+        while True:
+            # 构建带分页参数的URL
+            paginated_url = f"{server_url}/get_ips?page={page}&page_size={page_size}"
+            
+            # 使用会话保持连接，提高多次请求的效率
+            with requests.Session() as session:
+                response = session.get(paginated_url, timeout=30)
+                response.raise_for_status()
+                
+                try:
+                    data = response.json()
+                except ValueError:
+                    logger.error(f"从服务器获取未知IP时收到无效的JSON响应: {response.text}")
+                    return []
+                
+                # 处理数据格式
+                items = data.get('items', [])
+                
+                # 没有更多数据时退出循环
+                if not items:
+                    break
+                
+                # 提取IP地址并过滤空值
+                batch_ips = []
+                for item in items:
+                    ip = item.get('ip', '').strip() or item.get('ip_address', '').strip()
+                    if ip:  # 只添加非空IP
+                        batch_ips.append(ip)
+                
+                unknown_ips.extend(batch_ips)
+                
+                # 检查是否还有更多页面
+                total = data.get('total', 0)
+                if len(unknown_ips) >= total:
+                    break
+                
+                page += 1
+                
+                # 添加短暂延迟，避免对服务器造成过大压力
+                time.sleep(0.1)
+        
+        # 只在日志中显示部分IP以避免日志过大
+        display_limit = 10
+        if len(unknown_ips) <= display_limit:
+            logger.info(f"从服务器获取到的未知IP: {unknown_ips}")
         else:
-            logger.error(f"获取IP时出错: {response.status_code} - {response.text}")
-            return []
-    except requests.RequestException as e:
-        logger.error(f"发送请求时出错: {e}")
+            logger.info(f"从服务器获取到 {len(unknown_ips)} 个未知IP，前{display_limit}个: {unknown_ips[:display_limit]}...")
+            
+        return unknown_ips
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从服务器获取未知IP时出错: {e}")
         return []
-    except ValueError as e:
-        logger.error(f"解析响应JSON时出错: {e}")
+    except Exception as e:
+        logger.error(f"处理未知IP数据时发生错误: {e}")
         return []
 
-def get_allowed_ips(server_url, logger, token):
-    headers = {'Authorization': f'Bearer {token}'}
+def get_allowed_ips(server_url, logger, page_size=100):
+    """
+    从服务器获取允许IP列表
+    支持分页获取，以处理大量IP数据
+    """
     try:
-        logger.info(f"正在获取允许的IP，服务器URL: {server_url}")
-        response = requests.get(f"{server_url}/get_allowed_ips", headers=headers)
-        if response.status_code == 200:
-            data = response.json()
-            logger.info(f"获取允许IP成功，响应数据: {data}")
-            return data
+        allowed_ips = []
+        page = 1
+        
+        while True:
+            # 构建带分页参数的URL
+            paginated_url = f"{server_url}/get_allowed_ips?page={page}&page_size={page_size}"
+            
+            # 使用会话保持连接
+            with requests.Session() as session:
+                response = session.get(paginated_url, timeout=30)
+                response.raise_for_status()
+                
+                try:
+                    data = response.json()
+                except ValueError:
+                    logger.error(f"从服务器获取允许IP时收到无效的JSON响应: {response.text}")
+                    return []
+                
+                # 处理数据格式
+                items = data.get('items', [])
+                
+                # 没有更多数据时退出循环
+                if not items:
+                    break
+                
+                # 提取IP地址并过滤空值
+                batch_ips = []
+                for item in items:
+                    ip = item.get('ip', '').strip() or item.get('ip_address', '').strip()
+                    if ip:  # 只添加非空IP
+                        batch_ips.append(ip)
+                
+                allowed_ips.extend(batch_ips)
+                
+                # 检查是否还有更多页面
+                total = data.get('total', 0)
+                if len(allowed_ips) >= total:
+                    break
+                
+                page += 1
+                time.sleep(0.1)  # 添加短暂延迟
+        
+        # 只在日志中显示部分IP以避免日志过大
+        display_limit = 10
+        if len(allowed_ips) <= display_limit:
+            logger.info(f"从服务器获取到的允许IP: {allowed_ips}")
         else:
-            logger.error(f"获取允许IP时出错: {response.status_code} - {response.text}")
-            return []
-    except requests.RequestException as e:
-        logger.error(f"发送请求时出错: {e}")
+            logger.info(f"从服务器获取到 {len(allowed_ips)} 个允许IP，前{display_limit}个: {allowed_ips[:display_limit]}...")
+            
+        return allowed_ips
+    except requests.exceptions.RequestException as e:
+        logger.error(f"从服务器获取允许IP时出错: {e}")
         return []
-    except ValueError as e:
-        logger.error(f"解析响应JSON时出错: {e}")
+    except Exception as e:
+        logger.error(f"处理允许IP数据时发生错误: {e}")
         return []
 
-def add_ips_to_fail2ban(ips, jail, logger):
+def send_banned_ips(server_url, banned_ips, logger):
+    """
+    发送封禁IP到服务器
+    支持批量发送，以处理大量IP数据
+    """
     try:
-        for ip in ips:
-            subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], check=True)
-        logger.info(f"IPs已成功添加到Fail2Ban: {ips}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"添加IP到Fail2Ban时出错: {e}")
-
-def allow_ips_in_fail2ban(ips, jail, logger):
-    try:
-        for ip in ips:
-            subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], check=True)
-        logger.info(f"IPs已在Fail2Ban中被允许: {ips}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"在Fail2Ban中允许IP时出错: {e}")
+        # 如果没有IP，直接返回
+        if not banned_ips:
+            logger.info("没有IP需要发送到服务器")
+            return
+        
+        # 批量发送优化：每批发送固定数量的IP
+        batch_size = 500
+        total_ips = len(banned_ips)
+        success_count = 0
+        
+        logger.info(f"准备发送 {total_ips} 个封禁IP到服务器")
+        
+        # 分批处理
+        for i in range(0, total_ips, batch_size):
+            batch = banned_ips[i:i + batch_size]
+            batch_data = {'ips': batch}
+            
+            try:
+                with requests.Session() as session:
+                    response = session.post(f"{server_url}/add_ips", 
+                                           json=batch_data, 
+                                           timeout=60)  # 增加超时时间，应对大量数据传输
+                    response.raise_for_status()
+                    
+                    success_count += len(batch)
+                    logger.info(f"已成功发送批次 {i // batch_size + 1}/{(total_ips + batch_size - 1) // batch_size}，IP数量: {len(batch)}")
+                    
+                    # 添加短暂延迟，避免对服务器造成过大压力
+                    if i + batch_size < total_ips:
+                        time.sleep(0.2)
+                        
+            except requests.exceptions.RequestException as e:
+                logger.error(f"发送IP批次时出错 (批次 {i // batch_size + 1}): {e}")
+                # 继续处理下一批次
+        
+        logger.info(f"IP发送完成，共发送 {success_count}/{total_ips} 个IP")
+        
+    except Exception as e:
+        logger.error(f"发送封禁IP到服务器时发生未知错误: {e}")
 
 def main():
+    # 导入time模块（如果之前没有导入）
+    import time
+    
+    # 在main函数开始处添加缓存清理
+    def clear_cache():
+        """清理过期缓存"""
+        current_time = time.time()
+        for jail in list(_cache_timestamp.keys()):
+            if current_time - _cache_timestamp[jail] > CACHE_TTL:
+                _banned_ips_cache.pop(jail, None)
+                _cache_timestamp.pop(jail, None)
+    
+    # 定期清理缓存
+    clear_cache()
+    
     try:
         config = load_config()
-        token = config['auth']['token']
-
-        server_url = f"{config['server']['protocol']}://{config['server']['host']}:{config['server']['port']}"
-        jail = config['fail2ban']['jail']
-
-        # 先初始化logger
-        logger = setup_logging(
-            config['logging']['log_file'],
-            int(config['logging']['max_bytes']),
-            int(config['logging']['backup_count'])
-        )
+        server_url = config.get('server', {}).get('url', 'http://localhost:5000')
+        jail = config.get('fail2ban', {}).get('jail', 'sshd')
         
-        # 然后再使用logger
-        logger.info(f"配置加载成功，服务器信息: {config['server']}")
-        logger.info("客户端已启动")
-        logger.info("正在获取IP地址...")
-        ip_address = get_local_ip_address()
-        if not ip_address:
-            logger.error("无法获取IP地址。")
-            return
-        logger.info(f"IP地址获取成功: {ip_address}")
-
-        logger.info(f"正在获取被封禁IP，jail: {jail}")
+        # 确保服务器URL末尾没有斜杠，避免URL拼接问题
+        if server_url.endswith('/'):
+            server_url = server_url[:-1]
+        
+        logger = setup_logging()
+        logger.info(f"程序启动，服务器URL: {server_url}, Jail: {jail}")
+        
+        # 获取本地IP地址
+        local_ip = get_local_ip_address()
+        logger.info(f"本地IP地址: {local_ip}")
+        
+        # 获取Fail2Ban中的被封禁IP列表
         banned_ips = get_banned_ips(jail)
-        logger.info(f"获取被封禁IP完成，数量: {len(banned_ips)}")
+        logger.info(f"当前Fail2Ban中被封禁的IP数量: {len(banned_ips)}")
+        
+        # 发送被封禁IP到服务器
         if banned_ips:
-            send_banned_ips(banned_ips, server_url, ip_address, logger, token)
-        else:
-            logger.info("未找到被封禁的IP。")
-
-        logger.info("正在获取未知IP...")
-        unknown_ips = get_unknown_ips(server_url, ip_address, logger, token)
-        logger.info(f"获取未知IP完成，响应类型: {type(unknown_ips).__name__}, 值: {unknown_ips}")
+            send_banned_ips(server_url, banned_ips, logger)
+        
+        # 从服务器获取未知IP列表
+        unknown_ips = get_unknown_ips(server_url, local_ip, logger, page_size=200)
+        
+        # 添加未知IP到Fail2Ban
         if unknown_ips:
-            # 检查unknown_ips是否为字典且包含'items'键
-            if isinstance(unknown_ips, dict) and 'items' in unknown_ips:
-                ip_addresses = [ip.get('ip', '') for ip in unknown_ips['items'] if isinstance(ip, dict)]
-            elif isinstance(unknown_ips, list):
-                ip_addresses = [ip.get('ip_address', '') for ip in unknown_ips if isinstance(ip, dict)]
+            # 大批量IP处理时的优化策略
+            if len(unknown_ips) > 1000:  # 当IP数量超过1000时使用更大的批次
+                add_ips_to_fail2ban(unknown_ips, jail, logger)
             else:
-                logger.warning(f"未知IP数据格式异常: {unknown_ips}")
-                ip_addresses = []
-            logger.info(f"准备添加到Fail2Ban的IP数量: {len(ip_addresses)}, IP列表: {ip_addresses}")
-            if ip_addresses:
-                add_ips_to_fail2ban(ip_addresses, jail, logger)
-        else:
-            logger.info("未找到未知IP。")
-
-        logger.info("正在获取允许的IP...")
-        allowed_ips = get_allowed_ips(server_url, logger, token)
-        logger.info(f"获取允许IP完成，响应类型: {type(allowed_ips).__name__}, 值: {allowed_ips}")
+                add_ips_to_fail2ban(unknown_ips, jail, logger)
+        
+        # 从服务器获取允许的IP列表
+        allowed_ips = get_allowed_ips(server_url, logger, page_size=200)
+        
+        # 从Fail2Ban中允许这些IP
         if allowed_ips:
-            # 检查allowed_ips是否为字典且包含'items'键
-            if isinstance(allowed_ips, dict) and 'items' in allowed_ips:
-                ip_addresses = [ip.get('ip', '') for ip in allowed_ips['items'] if isinstance(ip, dict)]
-            elif isinstance(allowed_ips, list):
-                ip_addresses = [ip.get('ip_address', '') for ip in allowed_ips if isinstance(ip, dict)]
-            else:
-                logger.warning(f"允许IP数据格式异常: {allowed_ips}")
-                ip_addresses = []
-            logger.info(f"准备在Fail2Ban中允许的IP数量: {len(ip_addresses)}, IP列表: {ip_addresses}")
-            if ip_addresses:
-                allow_ips_in_fail2ban(ip_addresses, jail, logger)
-        else:
-            logger.info("未找到允许的IP。")
-
+            allow_ips_in_fail2ban(allowed_ips, jail, logger)
+        
+        logger.info("程序执行完成")
+        
     except Exception as e:
-        logger.error(f"主函数出错: {e}")
+        logger.error(f"程序执行过程中发生错误: {e}")
         import traceback
         logger.error(f"错误堆栈: {traceback.format_exc()}")
 
+# 在文件顶部添加缺少的import
+# 确保在文件开头导入所有必要的模块
+def load_config():
+    import os
+    import json
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            return json.load(f)
+    return {}
 
-if __name__ == '__main__':
+# 确保文件底部有main函数调用
+if __name__ == "__main__":
     main()
-
-
-
-
