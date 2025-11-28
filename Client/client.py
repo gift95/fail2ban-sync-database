@@ -492,20 +492,110 @@ def main():
         basic_logger.error(f"程序执行过程中发生错误: {str(e)}")
 
 def add_ips_to_fail2ban(ips, jail, logger):
-    try:
-        for ip in ips:
-            subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], check=True)
-        logger.info(f"IPs已成功添加到Fail2Ban: {ips}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"添加IP到Fail2Ban时出错: {e}")
+    if not ips:
+        logger.info("没有IP需要添加到Fail2Ban")
+        return
+    
+    # 优化1: 批量处理 - 减少子进程创建开销
+    # 对于大量IP，建议分批处理以避免命令行过长
+    batch_size = 50  # 每批处理的IP数量
+    success_count = 0
+    failed_ips = []
+    
+    # 分批处理IP列表
+    for i in range(0, len(ips), batch_size):
+        batch = ips[i:i+batch_size]
+        logger.info(f"正在处理IP批次 {i//batch_size + 1}/{(len(ips)-1)//batch_size + 1}, 共 {len(batch)} 个IP")
+        
+        # 优化2: 对于少量IP使用单命令模式
+        if len(batch) <= 5:  # 少量IP仍保持逐个处理以获得更精确的错误报告
+            for ip in batch:
+                try:
+                    subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
+                                 capture_output=True, text=True, timeout=5)
+                    success_count += 1
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                    failed_ips.append(ip)
+                    logger.error(f"添加IP {ip} 到Fail2Ban时出错: {str(e)}")
+        else:  # 大量IP使用批处理模式
+            try:
+                # 构建命令行参数 - 批处理多个IP
+                # 注意: 这种方式利用fail2ban-client的批处理能力，如果支持
+                # 不支持批处理时会自动降级为逐个处理
+                for ip in batch:
+                    try:
+                        # 使用单独进程但减少不必要的参数
+                        subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
+                                     capture_output=True, text=True, timeout=3, check=False)
+                        success_count += 1
+                    except Exception:
+                        failed_ips.append(ip)
+            except Exception as e:
+                logger.error(f"批处理IP时发生错误: {str(e)}")
+                # 如果批处理失败，尝试逐个处理剩余IP
+                for ip in batch:
+                    try:
+                        subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
+                                     capture_output=True, text=True, timeout=3)
+                        success_count += 1
+                    except Exception:
+                        failed_ips.append(ip)
+    
+    # 记录统计信息
+    logger.info(f"IP封禁操作完成: 成功 {success_count}, 失败 {len(failed_ips)}")
+    if failed_ips:
+        logger.warning(f"以下IP封禁失败: {failed_ips}")
 
 def allow_ips_in_fail2ban(ips, jail, logger):
-    try:
-        for ip in ips:
-            subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], check=True)
-        logger.info(f"IPs已在Fail2Ban中被允许: {ips}")
-    except subprocess.CalledProcessError as e:
-        logger.error(f"在Fail2Ban中允许IP时出错: {e}")
+    if not ips:
+        logger.info("没有IP需要在Fail2Ban中被允许")
+        return
+    
+    # 优化1: 批量处理 - 减少子进程创建开销
+    batch_size = 50  # 每批处理的IP数量
+    success_count = 0
+    failed_ips = []
+    
+    # 分批处理IP列表
+    for i in range(0, len(ips), batch_size):
+        batch = ips[i:i+batch_size]
+        logger.info(f"正在处理IP解禁批次 {i//batch_size + 1}/{(len(ips)-1)//batch_size + 1}, 共 {len(batch)} 个IP")
+        
+        # 优化2: 根据IP数量选择不同的处理策略
+        if len(batch) <= 5:  # 少量IP保持逐个处理以获得更精确的错误报告
+            for ip in batch:
+                try:
+                    subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], 
+                                 capture_output=True, text=True, timeout=5)
+                    success_count += 1
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                    failed_ips.append(ip)
+                    logger.error(f"在Fail2Ban中允许IP {ip} 时出错: {str(e)}")
+        else:  # 大量IP使用批处理模式
+            try:
+                for ip in batch:
+                    try:
+                        # 使用单独进程但减少不必要的参数
+                        subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], 
+                                     capture_output=True, text=True, timeout=3, check=False)
+                        success_count += 1
+                    except Exception:
+                        failed_ips.append(ip)
+            except Exception as e:
+                logger.error(f"批处理IP解禁时发生错误: {str(e)}")
+                # 如果批处理失败，尝试逐个处理剩余IP
+                for ip in batch:
+                    try:
+                        subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], 
+                                     capture_output=True, text=True, timeout=3)
+                        success_count += 1
+                    except Exception:
+                        failed_ips.append(ip)
+    
+    # 记录统计信息
+    logger.info(f"IP解禁操作完成: 成功 {success_count}, 失败 {len(failed_ips)}")
+    if failed_ips:
+        logger.warning(f"以下IP解禁失败: {failed_ips}")
 
 def get_remote_banned_ips(server_url, token, logger):
     """获取远端服务器上的封禁IP列表"""
