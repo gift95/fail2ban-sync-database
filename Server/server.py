@@ -105,8 +105,6 @@ def setup_logging():
         backupCount=5
     )
     file_handler.setLevel(logging.INFO)
-    
-    # 控制台日志handler
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
     
@@ -381,13 +379,14 @@ def get_ip_list(status):
         conn = get_db_connection()
         cursor = conn.cursor()
         
-        # 获取分页和查询参数
-        page = int(request.args.get('page', 1))
+        # 检查是否需要分页（只有明确提供了page参数时才使用分页）
+        page_param = request.args.get('page')
+        use_pagination = page_param is not None
+        
+        # 初始化分页参数
+        page = int(page_param) if page_param else 1
         per_page = int(request.args.get('per_page', 50))
         search_ip = request.args.get('search_ip', '').strip()
-        
-        # 计算偏移量
-        offset = (page - 1) * per_page
         
         # 构建查询SQL
         if search_ip:
@@ -396,15 +395,28 @@ def get_ip_list(status):
                           (status, f'%{search_ip}%'))
             total_count = cursor.fetchone()[0]
             
-            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? AND ip_address LIKE ? LIMIT ? OFFSET ?', 
-                          (status, f'%{search_ip}%', per_page, offset))
+            if use_pagination:
+                # 使用分页
+                offset = (page - 1) * per_page
+                cursor.execute('SELECT * FROM ip_addresses WHERE status = ? AND ip_address LIKE ? LIMIT ? OFFSET ?', 
+                              (status, f'%{search_ip}%', per_page, offset))
+            else:
+                # 不使用分页，返回所有匹配结果
+                cursor.execute('SELECT * FROM ip_addresses WHERE status = ? AND ip_address LIKE ?', 
+                              (status, f'%{search_ip}%'))
         else:
             # 无搜索过滤
             cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ?', (status,))
             total_count = cursor.fetchone()[0]
             
-            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? LIMIT ? OFFSET ?', 
-                          (status, per_page, offset))
+            if use_pagination:
+                # 使用分页
+                offset = (page - 1) * per_page
+                cursor.execute('SELECT * FROM ip_addresses WHERE status = ? LIMIT ? OFFSET ?', 
+                              (status, per_page, offset))
+            else:
+                # 不使用分页，返回所有结果
+                cursor.execute('SELECT * FROM ip_addresses WHERE status = ?', (status,))
         
         rows = cursor.fetchall()
 
@@ -421,29 +433,48 @@ def get_ip_list(status):
                 "block_count": row[7]
             })
         
-        # 计算总页数
-        total_pages = (total_count + per_page - 1) // per_page
-        
-        # 构建响应数据
-        response = {
-            "items": ip_addresses,
-            "pagination": {
+        # 根据是否使用分页构建不同的响应
+        if use_pagination:
+            # 计算总页数
+            total_pages = (total_count + per_page - 1) // per_page
+            
+            # 构建包含分页信息的响应
+            response = {
+                "items": ip_addresses,
+                "pagination": {
+                    "total_items": total_count,
+                    "total_pages": total_pages,
+                    "current_page": page,
+                    "items_per_page": per_page,
+                    "search_ip": search_ip
+                }
+            }
+            
+            status_names = {
+                'blocked': '被封禁',
+                'allowed': '允许的',
+                'known': '已知的'
+            }
+            
+            query_info = f"(搜索: {search_ip}) " if search_ip else ""
+            logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表 {query_info}第 {page}/{total_pages} 页，共 {total_count} 个")
+        else:
+            # 不包含分页信息的响应
+            response = {
+                "items": ip_addresses,
                 "total_items": total_count,
-                "total_pages": total_pages,
-                "current_page": page,
-                "items_per_page": per_page,
                 "search_ip": search_ip
             }
-        }
-
-        status_names = {
-            'blocked': '被封禁',
-            'allowed': '允许的',
-            'known': '已知的'
-        }
+            
+            status_names = {
+                'blocked': '被封禁',
+                'allowed': '允许的',
+                'known': '已知的'
+            }
+            
+            query_info = f"(搜索: {search_ip}) " if search_ip else ""
+            logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表 {query_info}共 {total_count} 个")
         
-        query_info = f"(搜索: {search_ip}) " if search_ip else ""
-        logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表 {query_info}第 {page}/{total_pages} 页，共 {total_count} 个")
         return jsonify(response), 200
     except Exception as e:
         logger.error(f"客户端 {client_name} ({client_ip}) 获取{status} IP列表时出错: {e}")
@@ -694,3 +725,4 @@ if __name__ == '__main__':
         # 关闭所有数据库连接
         db_pool.close_all()
         logger.info("服务器已关闭，所有资源已释放")
+
