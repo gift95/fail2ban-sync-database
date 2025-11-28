@@ -369,7 +369,7 @@ def add_ips():
         if conn:
             db_pool.return_connection(conn)
 
-# 通用的获取IP列表函数
+# 通用的获取IP列表函数（支持分页和查询）
 @auth.login_required
 def get_ip_list(status):
     update_ip_status()
@@ -380,7 +380,32 @@ def get_ip_list(status):
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
-        cursor.execute('SELECT * FROM ip_addresses WHERE status = ?', (status,))
+        
+        # 获取分页和查询参数
+        page = int(request.args.get('page', 1))
+        per_page = int(request.args.get('per_page', 50))
+        search_ip = request.args.get('search_ip', '').strip()
+        
+        # 计算偏移量
+        offset = (page - 1) * per_page
+        
+        # 构建查询SQL
+        if search_ip:
+            # 搜索过滤
+            cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ? AND ip_address LIKE ?', 
+                          (status, f'%{search_ip}%'))
+            total_count = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? AND ip_address LIKE ? LIMIT ? OFFSET ?', 
+                          (status, f'%{search_ip}%', per_page, offset))
+        else:
+            # 无搜索过滤
+            cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ?', (status,))
+            total_count = cursor.fetchone()[0]
+            
+            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? LIMIT ? OFFSET ?', 
+                          (status, per_page, offset))
+        
         rows = cursor.fetchall()
 
         ip_addresses = []
@@ -395,14 +420,31 @@ def get_ip_list(status):
                 "allowed_since": row[6],
                 "block_count": row[7]
             })
+        
+        # 计算总页数
+        total_pages = (total_count + per_page - 1) // per_page
+        
+        # 构建响应数据
+        response = {
+            "items": ip_addresses,
+            "pagination": {
+                "total_items": total_count,
+                "total_pages": total_pages,
+                "current_page": page,
+                "items_per_page": per_page,
+                "search_ip": search_ip
+            }
+        }
 
         status_names = {
             'blocked': '被封禁',
             'allowed': '允许的',
             'known': '已知的'
         }
-        logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表，共 {len(ip_addresses)} 个")
-        return jsonify(ip_addresses), 200
+        
+        query_info = f"(搜索: {search_ip}) " if search_ip else ""
+        logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表 {query_info}第 {page}/{total_pages} 页，共 {total_count} 个")
+        return jsonify(response), 200
     except Exception as e:
         logger.error(f"客户端 {client_name} ({client_ip}) 获取{status} IP列表时出错: {e}")
         return jsonify({"error": "服务器内部错误"}), 500
@@ -633,319 +675,10 @@ def web_allow_ip(ip):
         if conn:
             db_pool.return_connection(conn)
 
-# 确保templates文件夹存在
-if not os.path.exists('templates'):
-    os.makedirs('templates')
-
 # 设置密钥用于session加密
 app.secret_key = os.urandom(24)
 # 设置session过期时间
 app.permanent_session_lifetime = timedelta(minutes=30)
-
-# 创建必要的HTML模板
-with open('templates/login.html', 'w', encoding='utf-8') as f:
-    f.write('''
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>登录 - Fail2BanSync管理界面</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            margin: 0;
-            padding: 0;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-        }
-        .login-container {
-            background-color: white;
-            padding: 30px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            width: 300px;
-        }
-        h2 {
-            text-align: center;
-            color: #333;
-            margin-bottom: 20px;
-        }
-        .form-group {
-            margin-bottom: 15px;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            color: #666;
-        }
-        input {
-            width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        button {
-            width: 100%;
-            padding: 10px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        button:hover {
-            background-color: #45a049;
-        }
-        .error {
-            color: red;
-            text-align: center;
-            margin-top: 10px;
-        }
-    </style>
-</head>
-<body>
-    <div class="login-container">
-        <h2>Fail2BanSync管理界面</h2>
-        {% if error %}
-        <div class="error">{{ error }}</div>
-        {% endif %}
-        <form method="post">
-            <div class="form-group">
-                <label for="username">用户名</label>
-                <input type="text" id="username" name="username" required>
-            </div>
-            <div class="form-group">
-                <label for="password">密码</label>
-                <input type="password" id="password" name="password" required>
-            </div>
-            <button type="submit">登录</button>
-        </form>
-    </div>
-</body>
-</html>
-''')
-
-with open('templates/dashboard.html', 'w', encoding='utf-8') as f:
-    f.write('''
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Fail2BanSync管理界面</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #f4f4f4;
-            margin: 0;
-            padding: 0;
-        }
-        .header {
-            background-color: #333;
-            color: white;
-            padding: 15px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-        }
-        .logout {
-            color: white;
-            text-decoration: none;
-            padding: 8px 15px;
-            background-color: #555;
-            border-radius: 4px;
-        }
-        .logout:hover {
-            background-color: #777;
-        }
-        .container {
-            max-width: 1200px;
-            margin: 20px auto;
-            padding: 0 20px;
-        }
-        .message {
-            padding: 10px;
-            margin-bottom: 20px;
-            border-radius: 4px;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .warning {
-            background-color: #fff3cd;
-            color: #856404;
-            border: 1px solid #ffeaa7;
-        }
-        .section {
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
-            margin-bottom: 20px;
-        }
-        h2 {
-            color: #333;
-            margin-top: 0;
-            border-bottom: 2px solid #4CAF50;
-            padding-bottom: 10px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-            margin-top: 15px;
-        }
-        th, td {
-            padding: 12px;
-            text-align: left;
-            border-bottom: 1px solid #ddd;
-        }
-        th {
-            background-color: #f2f2f2;
-            font-weight: bold;
-        }
-        tr:hover {
-            background-color: #f5f5f5;
-        }
-        .action-btn {
-            padding: 5px 10px;
-            background-color: #4CAF50;
-            color: white;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-block;
-            font-size: 14px;
-        }
-        .action-btn:hover {
-            background-color: #45a049;
-        }
-        .status {
-            padding: 3px 8px;
-            border-radius: 4px;
-            font-size: 12px;
-            font-weight: bold;
-        }
-        .status.blocked {
-            background-color: #ffdddd;
-            color: #d8000c;
-        }
-        .status.allowed {
-            background-color: #ddffdd;
-            color: #4f8a10;
-        }
-        .status.known {
-            background-color: #ffffcc;
-            color: #9f6000;
-        }
-        .empty-state {
-            text-align: center;
-            padding: 30px;
-            color: #666;
-            font-style: italic;
-        }
-    </style>
-</head>
-<body>
-    <div class="header">
-        <h1>Fail2BanSync管理界面</h1>
-        <div>
-            <span>欢迎，{{ username }} | </span>
-            <a href="{{ url_for('logout') }}" class="logout">退出登录</a>
-        </div>
-    </div>
-    
-    <div class="container">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-                {% for category, message in messages %}
-                    <div class="message {{ category }}">{{ message }}</div>
-                {% endfor %}
-            {% endif %}
-        {% endwith %}
-        
-        <div class="section">
-            <h2>被封禁的IP地址</h2>
-            {% if blocked_ips %}
-            <table>
-                <tr>
-                    <th>IP地址</th>
-                    <th>描述</th>
-                    <th>状态</th>
-                    <th>报告来源</th>
-                    <th>封禁至</th>
-                    <th>封禁次数</th>
-                    <th>操作</th>
-                </tr>
-                {% for ip in blocked_ips %}
-                <tr>
-                    <td>{{ ip[1] }}</td>
-                    <td>{{ ip[2] or '-' }}</td>
-                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
-                    <td>{{ ip[4] }}</td>
-                    <td>{{ ip[5] }}</td>
-                    <td>{{ ip[7] }}</td>
-                    <td>
-                        <form method="post" action="{{ url_for('web_allow_ip', ip=ip[1]) }}">
-                            <button type="submit" class="action-btn">放行</button>
-                        </form>
-                    </td>
-                </tr>
-                {% endfor %}
-            </table>
-            {% else %}
-            <div class="empty-state">当前没有被封禁的IP地址</div>
-            {% endif %}
-        </div>
-        
-        <div class="section">
-            <h2>已放行的IP地址</h2>
-            {% if allowed_ips %}
-            <table>
-                <tr>
-                    <th>IP地址</th>
-                    <th>描述</th>
-                    <th>状态</th>
-                    <th>报告来源</th>
-                    <th>封禁次数</th>
-                    <th>放行时间</th>
-                </tr>
-                {% for ip in allowed_ips %}
-                <tr>
-                    <td>{{ ip[1] }}</td>
-                    <td>{{ ip[2] or '-' }}</td>
-                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
-                    <td>{{ ip[4] }}</td>
-                    <td>{{ ip[7] }}</td>
-                    <td>{{ ip[6] }}</td>
-                </tr>
-                {% endfor %}
-            </table>
-            {% else %}
-            <div class="empty-state">当前没有已放行的IP地址</div>
-            {% endif %}
-        </div>
-    </div>
-</body>
-</html>
-''')
 
 if __name__ == '__main__':
     try:
