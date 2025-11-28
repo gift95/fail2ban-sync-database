@@ -3,7 +3,7 @@
 # 可调整的变量:
 INSTALL_DIR="/opt/fail2bansync"
 SERVER_USER="fail2bansync"
-SERVER_FILE="server.py"
+SERVER_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/server.py"
 SERVICE_NAME="fail2bansync-server"
 
 echo "==== Fail2BanSync 服务器安装器 ===="
@@ -24,13 +24,16 @@ fi
 sudo mkdir -p "$INSTALL_DIR"
 sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR"
 
-# 4. 从当前目录复制server.py
-if [ ! -f "$SERVER_FILE" ]; then
-    echo "错误: 在当前目录未找到 $SERVER_FILE!"
+# 4. 从远程URL下载server.py（强制覆盖）
+echo "正在从远程服务器下载server.py..."
+if ! sudo curl -s -f -o "$INSTALL_DIR/server.py" "$SERVER_FILE"; then
+    echo "错误: 下载server.py失败!"
     exit 1
 fi
-sudo cp "$SERVER_FILE" "$INSTALL_DIR/$SERVER_FILE"
-sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/$SERVER_FILE"
+sudo chown "$SERVER_USER":"$SERVER_USER" "$INSTALL_DIR/server.py"
+sudo chmod +x "$INSTALL_DIR/server.py"
+echo "server.py 已下载并强制覆盖（如果文件已存在）"
+echo "server.py 下载成功并设置了执行权限"
 
 # 5. 创建示例配置
 if [ ! -f "$INSTALL_DIR/serverconfig.ini" ]; then
@@ -77,7 +80,7 @@ After=network.target
 Type=simple
 User=$SERVER_USER
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/python3 $INSTALL_DIR/$SERVER_FILE
+ExecStart=/usr/bin/python3 $INSTALL_DIR/server.py
 Restart=on-failure
 
 [Install]
@@ -96,5 +99,5 @@ echo "使用以下命令检查状态: sudo systemctl status $SERVICE_NAME"
 echo
 echo "配置文件位于: $INSTALL_DIR/serverconfig.ini"
 echo
-echo "如果您修改了server.py，请将其重新复制到目标目录并重启服务:"
-echo "sudo cp server.py $INSTALL_DIR/server.py && sudo systemctl restart $SERVICE_NAME"
+echo "如果您需要更新server.py，请重新运行安装脚本:"
+echo "./install_server.sh && sudo systemctl restart $SERVICE_NAME"
