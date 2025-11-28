@@ -9,6 +9,7 @@ import os
 import configparser
 import socket
 from datetime import datetime
+import time
 
 # 默认配置
 DEFAULT_CLIENT_CONFIG = {
@@ -133,12 +134,11 @@ def get_banned_ips(jail):
 
 def get_local_ip_address():
     try:
-        # 使用socket模块获取本地IP地址
+        # 使用socket模块获取本地主机名
         hostname = socket.gethostname()
-        ip_address = socket.gethostbyname(hostname)
-        return ip_address
+        return hostname
     except Exception as e:
-        print(f"获取IP地址时出错: {e}")
+        print(f"获取主机名时出错: {e}")
         return None
 
 def send_banned_ips(banned_ips, server_url, ip_address, logger, token):
@@ -158,11 +158,16 @@ def send_banned_ips(banned_ips, server_url, ip_address, logger, token):
     except requests.RequestException as e:
         logger.error(f"发送请求时出错: {e}")
 
-def get_unknown_ips(server_url, ip_address, logger, page_size=100):
+def get_unknown_ips(server_url, ip_address, logger, page_size=100, token=None):
     """
     从服务器获取未知IP列表
     支持分页获取，以处理大量IP数据
     """
+    # 准备headers，包含认证信息
+    headers = {}
+    if token:
+        headers = {'Authorization': f'Bearer {token}'}
+    
     try:
         unknown_ips = []
         page = 1
@@ -173,7 +178,7 @@ def get_unknown_ips(server_url, ip_address, logger, page_size=100):
             
             # 使用会话保持连接，提高多次请求的效率
             with requests.Session() as session:
-                response = session.get(paginated_url, timeout=30)
+                response = session.get(paginated_url, headers=headers, timeout=30)
                 response.raise_for_status()
                 
                 try:
@@ -223,11 +228,16 @@ def get_unknown_ips(server_url, ip_address, logger, page_size=100):
         logger.error(f"处理未知IP数据时发生错误: {e}")
         return []
 
-def get_allowed_ips(server_url, logger, page_size=100):
+def get_allowed_ips(server_url, logger, page_size=100, token=None):
     """
     从服务器获取允许IP列表
     支持分页获取，以处理大量IP数据
     """
+    # 准备headers，包含认证信息
+    headers = {}
+    if token:
+        headers = {'Authorization': f'Bearer {token}'}
+    
     try:
         allowed_ips = []
         page = 1
@@ -238,7 +248,7 @@ def get_allowed_ips(server_url, logger, page_size=100):
             
             # 使用会话保持连接
             with requests.Session() as session:
-                response = session.get(paginated_url, timeout=30)
+                response = session.get(paginated_url, headers=headers, timeout=30)
                 response.raise_for_status()
                 
                 try:
@@ -286,11 +296,16 @@ def get_allowed_ips(server_url, logger, page_size=100):
         logger.error(f"处理允许IP数据时发生错误: {e}")
         return []
 
-def send_banned_ips(server_url, banned_ips, logger):
+def send_banned_ips(server_url, banned_ips, logger, token=None):
     """
     发送封禁IP到服务器
     支持批量发送，以处理大量IP数据
     """
+    # 准备headers，包含认证信息
+    headers = {}
+    if token:
+        headers = {'Authorization': f'Bearer {token}'}
+    
     try:
         # 如果没有IP，直接返回
         if not banned_ips:
@@ -313,6 +328,7 @@ def send_banned_ips(server_url, banned_ips, logger):
                 with requests.Session() as session:
                     response = session.post(f"{server_url}/add_ips", 
                                            json=batch_data, 
+                                           headers=headers,
                                            timeout=60)  # 增加超时时间，应对大量数据传输
                     response.raise_for_status()
                     
@@ -367,6 +383,9 @@ def main():
         
         jail = config.get('fail2ban', {}).get('jail', 'sshd')
         
+        # 获取认证token
+        token = config.get('auth', {}).get('token', '')
+        
         # 初始化正式logger
         logger = setup_logging(log_file, max_bytes, backup_count)
         logger.info(f"程序启动，服务器URL: {server_url}, Jail: {jail}")
@@ -393,10 +412,10 @@ def main():
         
         # 发送被封禁IP到服务器
         if banned_ips:
-            send_banned_ips(server_url, banned_ips, logger)
+            send_banned_ips(server_url, banned_ips, logger, token)
         
         # 从服务器获取未知IP列表
-        unknown_ips = get_unknown_ips(server_url, local_ip, logger, page_size=200)
+        unknown_ips = get_unknown_ips(server_url, local_ip, logger, page_size=200, token=token)
         
         # 添加未知IP到Fail2Ban
         if unknown_ips:
@@ -407,7 +426,7 @@ def main():
                 add_ips_to_fail2ban(unknown_ips, jail, logger)
         
         # 从服务器获取允许的IP列表
-        allowed_ips = get_allowed_ips(server_url, logger, page_size=200)
+        allowed_ips = get_allowed_ips(server_url, logger, page_size=200, token=token)
         
         # 从Fail2Ban中允许这些IP
         if allowed_ips:
