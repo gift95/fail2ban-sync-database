@@ -33,8 +33,15 @@ def load_config():
     config = configparser.ConfigParser()
     config.read_dict({'DEFAULT': DEFAULT_CLIENT_CONFIG})
 
-    if os.path.exists('clientconfig.ini'):
-        config.read('clientconfig.ini')
+    # 使用绝对路径获取配置文件，避免工作目录问题
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_file_path = os.path.join(script_dir, 'clientconfig.ini')
+    
+    if os.path.exists(config_file_path):
+        config.read(config_file_path)
+        print(f"已加载配置文件: {config_file_path}")
+    else:
+        print(f"未找到配置文件: {config_file_path}，使用默认配置")
 
     token = ""
     if config.has_option('auth', 'token'):
