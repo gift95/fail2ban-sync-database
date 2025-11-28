@@ -43,7 +43,9 @@ def load_config():
             'bantime.factor': '24',
             'bantime.maxtime': '5w',
             'known_duration': '48h',
-            'allowed_duration': '2m'
+            'allowed_duration': '2m',
+            'web_user': 'admin',
+            'web_pass': 'admin123'
         }
     })
 
@@ -62,7 +64,9 @@ def load_config():
         'bantime_maxtime': config.get('DEFAULT', 'bantime.maxtime', fallback='5w'),
         'known_duration': config.get('DEFAULT', 'known_duration', fallback='48h'),
         'allowed_duration': config.get('DEFAULT', 'allowed_duration', fallback='2m'),
-        'api_tokens': tokens
+        'api_tokens': tokens,
+        'web_user': config.get('DEFAULT', 'web_user', fallback='admin'),
+        'web_pass': config.get('DEFAULT', 'web_pass', fallback='admin123')
     }
 
 # 时间转换
@@ -84,6 +88,8 @@ config = load_config()
 BLOCK_DURATION = parse_time(config['bantime'])
 INCREMENT_BLOCK = config['bantime_increment']
 BLOCK_FACTOR = config['bantime_factor']
+WEB_USERS = config['web_user']
+WEB_PASS = config['web_pass']
 MAX_BLOCK_DURATION = parse_time(config['bantime_maxtime'])
 KNOWN_DURATION = parse_time(config['known_duration'])
 ALLOWED_DURATION = parse_time(config['allowed_duration'])
@@ -242,14 +248,12 @@ def calculate_block_duration(block_count):
 auth = HTTPTokenAuth(scheme='Bearer')
 # 使用已经加载的配置，避免重复加载
 TOKENS = config['api_tokens'] 
-# 添加测试令牌（用于开发测试）
-TOKENS['test_token_123'] = 'test_client'
 
 # 用户名密码认证（用于Web界面）
 web_auth = HTTPBasicAuth()
 # 初始化用户数据库（实际项目中应该从配置文件或数据库加载）
 users = {
-    "admin": generate_password_hash("admin123")  # 默认用户名: admin, 密码: admin123
+    WEB_USERS: generate_password_hash(WEB_PASS)  # 默认用户名: admin, 密码: admin123
 }
 
 @web_auth.verify_password
@@ -725,4 +729,5 @@ if __name__ == '__main__':
         # 关闭所有数据库连接
         db_pool.close_all()
         logger.info("服务器已关闭，所有资源已释放")
+
 
