@@ -10,6 +10,23 @@ import time
 from contextlib import closing
 from flask_httpauth import HTTPTokenAuth
 
+# 获取真实IP地址（考虑代理情况）
+def get_client_ip():
+    # 优先获取X-Forwarded-For头部（多个代理情况下，第一个IP是客户端真实IP）
+    x_forwarded_for = request.headers.get('X-Forwarded-For')
+    if x_forwarded_for:
+        # X-Forwarded-For可能包含多个IP，格式为：客户端IP, 代理1IP, 代理2IP...
+        # 取第一个IP作为客户端真实IP
+        return x_forwarded_for.split(',')[0].strip()
+    
+    # 其次获取X-Real-IP头部
+    x_real_ip = request.headers.get('X-Real-IP')
+    if x_real_ip:
+        return x_real_ip.strip()
+    
+    # 如果都没有，则使用默认的remote_addr
+    return request.remote_addr
+
 
 # 初始化Flask应用
 app = Flask(__name__)
@@ -74,17 +91,33 @@ ALLOWED_DURATION = parse_time(config['allowed_duration'])
 def setup_logging():
     logger = logging.getLogger('ip_server')
     logger.setLevel(logging.INFO)
-
-    handler = RotatingFileHandler(
+    
+    # 清除已有的handler，避免重复添加
+    if logger.handlers:
+        for handler in logger.handlers:
+            logger.removeHandler(handler)
+    
+    # 文件日志handler
+    file_handler = RotatingFileHandler(
         'server.log',
         maxBytes=1024*1024,
         backupCount=5
     )
-    handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.INFO)
+    
+    # 控制台日志handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # 设置日志格式
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-
-    logger.addHandler(handler)
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # 添加handler
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
     return logger
 
 logger = setup_logging()
@@ -180,12 +213,15 @@ def verify_token(token):
 @auth.login_required
 def add_ips():
     update_ip_status()
-
+    
+    # 获取真实客户端IP
+    client_ip = get_client_ip()
+    
     data = request.json
     ips = data.get('ips', [])
     description = data.get('description', '')
     status = data.get('status', 'blocked')
-    reported_by = data.get('reported_by', '')
+    reported_by = data.get('reported_by', client_ip)
 
     if not ips:
         return jsonify({"error": "需要IP地址列表"}), 400
@@ -223,7 +259,7 @@ def add_ips():
                     ''', (datetime.now() + block_duration, reported_by, block_count, ip))
 
                     added_ips.append(ip)
-                    logger.info(f"IP {ip}已封禁 (封禁计数: {block_count}, 封禁时间: {block_duration})")
+                    logger.info(f"IP {ip}已封禁 (封禁计数: {block_count}, 封禁时间: {block_duration}, 报告来源: {client_ip})")
 
                 elif current_status != 'blocked':
                     block_duration = calculate_block_duration(block_count)
@@ -245,7 +281,7 @@ def add_ips():
                         ''', (datetime.now() + block_duration, reported_by, block_count, ip))
 
                     added_ips.append(ip)
-                    logger.info(f"IP {ip}已封禁 (封禁时间: {block_duration})")
+                    logger.info(f"IP {ip}已封禁 (封禁时间: {block_duration}, 报告来源: {client_ip})")
 
             conn.commit()
             return jsonify({"message": "IP地址已添加", "added_ips": added_ips}), 201

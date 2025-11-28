@@ -60,15 +60,33 @@ def load_config():
 def setup_logging(log_file, max_bytes, backup_count):
     logger = logging.getLogger('ip_client')
     logger.setLevel(logging.INFO)
-    handler = RotatingFileHandler(
+    
+    # 清除已有的handler，避免重复添加
+    if logger.handlers:
+        for handler in logger.handlers:
+            logger.removeHandler(handler)
+    
+    # 文件日志handler
+    file_handler = RotatingFileHandler(
         log_file,
         maxBytes=int(max_bytes),
         backupCount=int(backup_count)
     )
-    handler.setLevel(logging.INFO)
+    file_handler.setLevel(logging.INFO)
+    
+    # 控制台日志handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    
+    # 设置日志格式
     formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
+    file_handler.setFormatter(formatter)
+    console_handler.setFormatter(formatter)
+    
+    # 添加handler
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
     return logger
 
 def get_banned_ips(jail):
