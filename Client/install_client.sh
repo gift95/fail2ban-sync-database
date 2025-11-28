@@ -83,21 +83,51 @@ chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 # 5. 安装依赖
 pip3 install --user requests
 
-# 6. 创建定时任务
-CRON_CMD="cd $INSTALL_DIR && /usr/bin/python3 $INSTALL_DIR/client.py >> $INSTALL_DIR/client_cron.log 2>&1"
-# 检查定时任务是否已存在
-( crontab -l 2>/dev/null | grep -Fv "$CRON_CMD" ; echo "* * * * * $CRON_CMD" ) | crontab -
+# 6. 创建systemd服务文件
+echo "创建systemd服务文件..."
+SERVICE_FILE="/etc/systemd/system/fail2ban-sync-client.service"
+
+sudo bash -c "cat > $SERVICE_FILE" <<EOF
+[Unit]
+Description=Fail2Ban Sync Client
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=$INSTALL_DIR
+ExecStart=/usr/bin/python3 $INSTALL_DIR/client.py
+Restart=always
+RestartSec=60
+User=$USER
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+# 重新加载systemd配置
+sudo systemctl daemon-reload
+
+# 启动并启用服务
+sudo systemctl enable fail2ban-sync-client.service
+sudo systemctl start fail2ban-sync-client.service
 
 echo
 echo "完成!"
 echo "客户端已安装在: $INSTALL_DIR"
 if [ -z "$TOKEN" ]; then
-    echo "请在 $INSTALL_DIR/$CONFIG_FILE 中输入相应的令牌 [auth] token=..."
+    echo "请在 $INSTALL_DIR/clientconfig.ini 中输入相应的令牌 [auth] token=..."
 fi
 echo "日志位于 $INSTALL_DIR/client.log"
+echo "系统日志可通过: journalctl -u fail2ban-sync-client.service 查看"
 echo
-echo "客户端现在将作为定时任务每分钟自动运行。"
-echo "检查定时任务: crontab -l"
+echo "客户端已作为systemd服务安装并启动。"
+echo "管理命令:"
+echo "  - 启动服务: sudo systemctl start fail2ban-sync-client.service"
+echo "  - 停止服务: sudo systemctl stop fail2ban-sync-client.service"
+echo "  - 重启服务: sudo systemctl restart fail2ban-sync-client.service"
+echo "  - 查看状态: sudo systemctl status fail2ban-sync-client.service"
+echo
+echo "客户端将每60秒自动运行一次（通过服务的RestartSec配置）"
 echo
 SCRIPT_NAME="install_client.sh"
 echo "使用方法: $SCRIPT_NAME <server_host>:<port> <token>"
