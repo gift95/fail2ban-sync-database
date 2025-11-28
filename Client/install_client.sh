@@ -43,17 +43,19 @@ chown "$USER":"$USER" "$INSTALL_DIR/client.py"
 echo "client.py 下载成功"
 
 # 4. 从远程URL下载配置文件
-echo "正在从远程服务器下载配置文件..."
-if ! curl -s  -o "$INSTALL_DIR/clientconfig.ini" "$CONFIG_FILE"; then
-    echo "警告: 下载配置文件失败，将创建默认配置文件"
-    # 创建默认配置文件
-    # 根据端口设置协议
-    if [ "$PORT" = "443" ]; then
-        PROTOCOL="https"
-    else
-        PROTOCOL="http"
-    fi
-    cat > "$INSTALL_DIR/clientconfig.ini" <<EOF
+echo "正在检查配置文件是否存在..."
+if [ ! -f "$INSTALL_DIR/clientconfig.ini" ]; then
+    echo "配置文件不存在，正在从远程服务器下载配置文件..."
+    if ! curl -s  -o "$INSTALL_DIR/clientconfig.ini" "$CONFIG_FILE"; then
+        echo "警告: 下载配置文件失败，将创建默认配置文件"
+        # 创建默认配置文件
+        # 根据端口设置协议
+        if [ "$PORT" = "443" ]; then
+            PROTOCOL="https"
+        else
+            PROTOCOL="http"
+        fi
+        cat > "$INSTALL_DIR/clientconfig.ini" <<EOF
 [server]
 host = $HOST
 port = $PORT
@@ -70,22 +72,26 @@ jail = sshd
 [auth]
 token = ${TOKEN:-在此添加令牌}
 EOF
-else
-    echo "配置文件下载成功"
-    # 如果提供了令牌，更新配置文件中的令牌
-    if [ -n "$TOKEN" ]; then
-        sed -i "s/token = .*/token = $TOKEN/" "$INSTALL_DIR/clientconfig.ini"
-        echo "配置文件已使用提供的令牌更新"
-    fi
-    # 更新服务器地址和端口
-    sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
-    sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
-    # 根据端口更新协议
-    if [ "$PORT" = "443" ]; then
-        sed -i "s/protocol = .*/protocol = https/" "$INSTALL_DIR/clientconfig.ini"
     else
-        sed -i "s/protocol = .*/protocol = http/" "$INSTALL_DIR/clientconfig.ini"
+        echo "配置文件下载成功"
     fi
+else
+    echo "配置文件已存在，跳过下载操作"
+fi
+
+# 如果提供了令牌，更新配置文件中的令牌
+if [ -n "$TOKEN" ]; then
+    sed -i "s/token = .*/token = $TOKEN/" "$INSTALL_DIR/clientconfig.ini"
+    echo "配置文件已使用提供的令牌更新"
+fi
+# 更新服务器地址和端口
+sed -i "s/host = .*/host = $HOST/" "$INSTALL_DIR/clientconfig.ini"
+sed -i "s/port = .*/port = $PORT/" "$INSTALL_DIR/clientconfig.ini"
+# 根据端口更新协议
+if [ "$PORT" = "443" ]; then
+    sed -i "s/protocol = .*/protocol = https/" "$INSTALL_DIR/clientconfig.ini"
+else
+    sed -i "s/protocol = .*/protocol = http/" "$INSTALL_DIR/clientconfig.ini"
 fi
 chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 
