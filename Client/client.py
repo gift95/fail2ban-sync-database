@@ -436,36 +436,38 @@ def main():
                 allow_ips_in_fail2ban(remote_allowed_ips, jail, basic_logger)
             basic_logger.info("允许IP规则应用完成")
         
-        # 同步远端封禁IP到本地
-        if config.get('sync_remote_banned_ips', True):
-            basic_logger.info("开始同步远端封禁IP到本地")
+        # 获取远端封禁IP（只获取一次）
+        remote_banned_ips = None
+        if config.get('sync_remote_banned_ips', True) or (banned_ips and config.get('sync_local_banned_ips', True)):
             remote_banned_ips = get_remote_banned_ips(server_url, server_token, basic_logger)
-            if remote_banned_ips:
-                # 获取本地当前已封禁的IP
-                local_banned_ips = get_banned_ips(basic_logger)
+        
+        # 同步远端封禁IP到本地
+        if config.get('sync_remote_banned_ips', True) and remote_banned_ips:
+            basic_logger.info("开始同步远端封禁IP到本地")
+            # 获取本地当前已封禁的IP
+            local_banned_ips = get_banned_ips(basic_logger)
+            
+            # 比较差异，只获取需要添加的IP
+            to_add_ips, to_remove_ips = compare_ip_lists(remote_banned_ips, local_banned_ips)
+            
+            if to_add_ips:
+                basic_logger.info(f"找到 {len(to_add_ips)} 个需要添加的IP")
+                add_ips_to_fail2ban(to_add_ips, jail, basic_logger)
+            else:
+                basic_logger.info("本地已包含所有远端封禁的IP，无需添加")
                 
-                # 比较差异，只获取需要添加的IP
-                to_add_ips, to_remove_ips = compare_ip_lists(remote_banned_ips, local_banned_ips)
-                
-                if to_add_ips:
-                    basic_logger.info(f"找到 {len(to_add_ips)} 个需要添加的IP")
-                    add_ips_to_fail2ban(to_add_ips, jail, basic_logger)
-                else:
-                    basic_logger.info("本地已包含所有远端封禁的IP，无需添加")
-                    
-                # 可选：处理需要移除的IP（如果需要）
-                if config.get('sync_remove_unlisted_ips', False) and to_remove_ips:
-                    basic_logger.info(f"找到 {len(to_remove_ips)} 个需要移除的IP")
-                    # 这里可以添加移除IP的逻辑
+            # 可选：处理需要移除的IP（如果需要）
+            if config.get('sync_remove_unlisted_ips', False) and to_remove_ips:
+                basic_logger.info(f"找到 {len(to_remove_ips)} 个需要移除的IP")
+                # 这里可以添加移除IP的逻辑
             basic_logger.info("远端封禁IP同步完成")
         
         # 发送被封禁的IP到服务器
-        if banned_ips:
-            # 获取服务器上已有的封禁IP
-            server_banned_ips = get_remote_banned_ips(server_url, token, basic_logger)
+        if banned_ips and remote_banned_ips:
+            # 使用已获取的远端封禁IP，不再重复请求
             
             # 比较差异，只获取需要发送的IP（本地有但服务器没有）
-            to_send_ips, _ = compare_ip_lists(banned_ips, server_banned_ips)
+            to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
             
             if to_send_ips:
                 basic_logger.info(f"找到 {len(to_send_ips)} 个需要发送到服务器的IP")
@@ -481,10 +483,7 @@ def main():
             _cache_timestamp = time.time()
             basic_logger.info("缓存已清理")
         
-        # 获取远端的封禁IP并添加到本机
-        remote_banned_ips = get_remote_banned_ips(server_url, token, basic_logger)
-        if remote_banned_ips:
-            add_ips_to_fail2ban(remote_banned_ips, jail, basic_logger)
+        # 不再重复获取远端封禁IP，已在上面处理完成
         
         clear_cache()
         basic_logger.info("程序执行完成")
