@@ -65,7 +65,7 @@ def setup_logging(log_file, max_bytes, backup_count):
 # 添加全局变量用于缓存已获取的封禁IP列表，减少重复调用
 _banned_ips_cache = {}
 _cache_timestamp = {}
-CACHE_TTL = 30  # 缓存有效期（秒）
+CACHE_TTL = 300  # 缓存有效期（秒）
 
 def load_config(basic_logger=None):
     """从文件加载配置或使用默认值"""
@@ -299,14 +299,32 @@ def get_unknown_ips(server_url, ip_address, logger, page_size=100, token=None):
         logger.error(f"处理未知IP数据时发生错误: {e}")
         return []
 
-def get_allowed_ips(logger=None):
+def get_allowed_ips(logger=None, server_url=None, token=None):
+    """获取允许的IP列表
+    
+    Args:
+        logger: 日志记录器
+        server_url: 服务器URL，如果为None则从配置加载
+        token: 认证令牌，如果为None则从配置加载
+    
+    Returns:
+        允许的IP列表
+    """
     log_func = logger.info if logger else print
     
     try:
-        # 加载配置，获取服务器URL和token
-        config = load_config()
-        server_url = config.get('server', {}).get('url', 'http://localhost:5000')
-        token = config.get('auth', {}).get('token', '')
+        # 如果没有提供server_url或token，则从配置加载
+        if server_url is None or token is None:
+            config = load_config(logger)
+            if server_url is None:
+                # 使用与main函数相同的方式构建服务器URL
+                server_config = config.get('server', {})
+                protocol = server_config.get('protocol', 'http')
+                host = server_config.get('host', 'localhost')
+                port = server_config.get('port', '5000')
+                server_url = f"{protocol}://{host}:{port}"
+            if token is None:
+                token = config.get('auth', {}).get('token', '')
         
         allowed_ips = []
         page = 1
@@ -319,12 +337,21 @@ def get_allowed_ips(logger=None):
                 'Authorization': f"Bearer {token}"
             }
             
+            log_func(f"正在请求允许IP列表: {url}")
             # 发送请求
             response = requests.get(url, headers=headers, timeout=30)
             
             if response.status_code == 200:
                 data = response.json()
-                ips_batch = data.get('ips', [])
+                # 适配服务器返回的数据格式
+                ips_batch = []
+                if 'items' in data:
+                    # 与get_remote_allowed_ips函数保持一致的数据解析方式
+                    ips_batch = [item.get('ip_address') for item in data.get('items', []) if item.get('ip_address')]
+                elif 'ips' in data:
+                    # 兼容旧的响应格式
+                    ips_batch = data.get('ips', [])
+                
                 allowed_ips.extend(ips_batch)
                 
                 # 检查是否还有更多页面
@@ -397,15 +424,53 @@ def main():
         # 获取允许的IP
         allowed_ips = get_allowed_ips(basic_logger)
         
-        # 应用允许的IP规则（如果需要）
-        if allowed_ips:
-            apply_allowed_ips(allowed_ips, basic_logger)
+        # 应用允许IP规则
+        server_token = token
+        if config.get('sync_allowed_ips', True):
+            basic_logger.info("开始应用允许IP规则")
+            remote_allowed_ips = get_remote_allowed_ips(server_url, server_token, basic_logger)
+            if remote_allowed_ips:
+                allow_ips_in_fail2ban(remote_allowed_ips, jail, basic_logger)
+            basic_logger.info("允许IP规则应用完成")
+        
+        # 同步远端封禁IP到本地
+        if config.get('sync_remote_banned_ips', True):
+            basic_logger.info("开始同步远端封禁IP到本地")
+            remote_banned_ips = get_remote_banned_ips(server_url, server_token, basic_logger)
+            if remote_banned_ips:
+                # 获取本地当前已封禁的IP
+                local_banned_ips = get_banned_ips(basic_logger)
+                
+                # 比较差异，只获取需要添加的IP
+                to_add_ips, to_remove_ips = compare_ip_lists(remote_banned_ips, local_banned_ips)
+                
+                if to_add_ips:
+                    basic_logger.info(f"找到 {len(to_add_ips)} 个需要添加的IP")
+                    add_ips_to_fail2ban(to_add_ips, jail, basic_logger)
+                else:
+                    basic_logger.info("本地已包含所有远端封禁的IP，无需添加")
+                    
+                # 可选：处理需要移除的IP（如果需要）
+                if config.get('sync_remove_unlisted_ips', False) and to_remove_ips:
+                    basic_logger.info(f"找到 {len(to_remove_ips)} 个需要移除的IP")
+                    # 这里可以添加移除IP的逻辑
+            basic_logger.info("远端封禁IP同步完成")
         
         # 发送被封禁的IP到服务器
         if banned_ips:
-            success, failed = send_banned_ips(server_url, banned_ips, ip_address, jail, token, basic_logger)
-            if not success and failed:
-                basic_logger.error(f"部分IP发送失败，共 {len(failed)} 个")
+            # 获取服务器上已有的封禁IP
+            server_banned_ips = get_remote_banned_ips(server_url, token, basic_logger)
+            
+            # 比较差异，只获取需要发送的IP（本地有但服务器没有）
+            to_send_ips, _ = compare_ip_lists(banned_ips, server_banned_ips)
+            
+            if to_send_ips:
+                basic_logger.info(f"找到 {len(to_send_ips)} 个需要发送到服务器的IP")
+                success, failed = send_banned_ips(server_url, to_send_ips, ip_address, jail, token, basic_logger)
+                if not success and failed:
+                    basic_logger.error(f"部分IP发送失败，共 {len(failed)} 个")
+            else:
+                basic_logger.info("服务器已包含所有本地封禁的IP，无需发送")
         
         # 清理过期缓存
         if isinstance(_cache_timestamp, (int, float)) and time.time() - _cache_timestamp > CACHE_TTL:
@@ -413,13 +478,91 @@ def main():
             _cache_timestamp = time.time()
             basic_logger.info("缓存已清理")
         
+        # 获取远端的封禁IP并添加到本机
+        remote_banned_ips = get_remote_banned_ips(server_url, token, basic_logger)
+        if remote_banned_ips:
+            add_ips_to_fail2ban(remote_banned_ips, jail, basic_logger)
+        
         clear_cache()
         basic_logger.info("程序执行完成")
         return 0
     except Exception as e:
         basic_logger.error(f"程序执行过程中发生错误: {str(e)}")
-        basic_logger.exception("错误详情:")
-        return 1
+
+def add_ips_to_fail2ban(ips, jail, logger):
+    try:
+        for ip in ips:
+            subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], check=True)
+        logger.info(f"IPs已成功添加到Fail2Ban: {ips}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"添加IP到Fail2Ban时出错: {e}")
+
+def allow_ips_in_fail2ban(ips, jail, logger):
+    try:
+        for ip in ips:
+            subprocess.run(['fail2ban-client', 'set', jail, 'unbanip', ip], check=True)
+        logger.info(f"IPs已在Fail2Ban中被允许: {ips}")
+    except subprocess.CalledProcessError as e:
+        logger.error(f"在Fail2Ban中允许IP时出错: {e}")
+
+def get_remote_banned_ips(server_url, token, logger):
+    """获取远端服务器上的封禁IP列表"""
+    try:
+        url = f"{server_url}/get_ips"
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # 从items数组中提取IP地址列表
+            banned_ips = [item.get('ip_address') for item in data.get('items', []) if item.get('ip_address')]
+            logger.info(f"成功获取到 {len(banned_ips)} 个远端封禁IP")
+            return banned_ips
+        else:
+            logger.error(f"获取远端封禁IP请求失败: HTTP {response.status_code}")
+    except Exception as e:
+        logger.error(f"获取远端封禁IP时发生异常: {str(e)}")
+    
+    return []
+
+def compare_ip_lists(remote_ips, local_ips):
+    """比较远端和本地IP列表，返回需要同步的差异部分"""
+    remote_set = set(remote_ips)
+    local_set = set(local_ips)
+    
+    # 需要添加到本地的IP（远端有但本地没有）
+    to_add = list(remote_set - local_set)
+    
+    # 本地有但远端没有的IP（可选处理）
+    to_remove = list(local_set - remote_set)
+    
+    return to_add, to_remove
+
+def get_remote_allowed_ips(server_url, token, logger):
+    """获取远端服务器上的已允许IP列表"""
+    try:
+        url = f"{server_url}/get_allowed_ips"
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'Content-Type': 'application/json'
+        }
+        response = requests.get(url, headers=headers, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            # 从items数组中提取IP地址列表
+            allowed_ips = [item.get('ip_address') for item in data.get('items', []) if item.get('ip_address')]
+            logger.info(f"成功获取到 {len(allowed_ips)} 个远端允许IP")
+            return allowed_ips
+        else:
+            logger.error(f"获取远端允许IP请求失败: HTTP {response.status_code}")
+    except Exception as e:
+        logger.error(f"获取远端允许IP时发生异常: {str(e)}")
+    
+    return []
 
 # 最后一行需要确保是正确的main函数调用
 if __name__ == "__main__":
