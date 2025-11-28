@@ -7,6 +7,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 import os
 import configparser
+import socket
 from datetime import datetime
 
 # 默认配置
@@ -106,24 +107,23 @@ def get_banned_ips(jail):
         print(f"获取被封禁IP时出错: {e}")
         return []
 
-def get_local_mac_address():
+def get_local_ip_address():
     try:
-        result = subprocess.run(['ip', 'addr'], capture_output=True, text=True, check=True)
-        mac_address_match = re.search(r'link/ether\s+([0-9A-Fa-f:]{17})', result.stdout)
-        if mac_address_match:
-            return mac_address_match.group(1)
-        return None
+        # 使用socket模块获取本地IP地址
+        hostname = socket.gethostname()
+        ip_address = socket.gethostbyname(hostname)
+        return ip_address
     except Exception as e:
-        print(f"获取MAC地址时出错: {e}")
+        print(f"获取IP地址时出错: {e}")
         return None
 
-def send_banned_ips(banned_ips, server_url, mac_address, logger, token):
+def send_banned_ips(banned_ips, server_url, ip_address, logger, token):
     headers = {'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'}
     data = {
         'ips': banned_ips,
         'description': '来自fail2ban的被封禁IP',
         'status': 'blocked',
-        'reported_by': mac_address
+        'reported_by': ip_address
     }
     try:
         response = requests.post(f"{server_url}/add_ips", headers=headers, data=json.dumps(data))
@@ -134,28 +134,42 @@ def send_banned_ips(banned_ips, server_url, mac_address, logger, token):
     except requests.RequestException as e:
         logger.error(f"发送请求时出错: {e}")
 
-def get_unknown_ips(server_url, mac_address, logger, token):
+def get_unknown_ips(server_url, ip_address, logger, token):
     headers = {'Authorization': f'Bearer {token}'}
     try:
-        response = requests.get(f"{server_url}/get_ips?mac_address={mac_address}", headers=headers)
+        logger.info(f"正在获取未知IP，服务器URL: {server_url}, IP地址: {ip_address}")
+        response = requests.get(f"{server_url}/get_ips?ip_address={ip_address}", headers=headers)
         if response.status_code == 200:
-            return response.json()
-        logger.error(f"获取IP时出错: {response.status_code} - {response.text}")
-        return []
+            data = response.json()
+            logger.info(f"获取未知IP成功，响应数据: {data}")
+            return data
+        else:
+            logger.error(f"获取IP时出错: {response.status_code} - {response.text}")
+            return []
     except requests.RequestException as e:
         logger.error(f"发送请求时出错: {e}")
+        return []
+    except ValueError as e:
+        logger.error(f"解析响应JSON时出错: {e}")
         return []
 
 def get_allowed_ips(server_url, logger, token):
     headers = {'Authorization': f'Bearer {token}'}
     try:
+        logger.info(f"正在获取允许的IP，服务器URL: {server_url}")
         response = requests.get(f"{server_url}/get_allowed_ips", headers=headers)
         if response.status_code == 200:
-            return response.json()
-        logger.error(f"获取允许IP时出错: {response.status_code} - {response.text}")
-        return []
+            data = response.json()
+            logger.info(f"获取允许IP成功，响应数据: {data}")
+            return data
+        else:
+            logger.error(f"获取允许IP时出错: {response.status_code} - {response.text}")
+            return []
     except requests.RequestException as e:
         logger.error(f"发送请求时出错: {e}")
+        return []
+    except ValueError as e:
+        logger.error(f"解析响应JSON时出错: {e}")
         return []
 
 def add_ips_to_fail2ban(ips, jail, logger):
@@ -182,41 +196,76 @@ def main():
         server_url = f"{config['server']['protocol']}://{config['server']['host']}:{config['server']['port']}"
         jail = config['fail2ban']['jail']
 
+        # 先初始化logger
         logger = setup_logging(
             config['logging']['log_file'],
             int(config['logging']['max_bytes']),
             int(config['logging']['backup_count'])
         )
-
+        
+        # 然后再使用logger
+        logger.info(f"配置加载成功，服务器信息: {config['server']}")
         logger.info("客户端已启动")
-        mac_address = get_local_mac_address()
-        if not mac_address:
-            logger.error("无法获取MAC地址。")
+        logger.info("正在获取IP地址...")
+        ip_address = get_local_ip_address()
+        if not ip_address:
+            logger.error("无法获取IP地址。")
             return
+        logger.info(f"IP地址获取成功: {ip_address}")
 
+        logger.info(f"正在获取被封禁IP，jail: {jail}")
         banned_ips = get_banned_ips(jail)
+        logger.info(f"获取被封禁IP完成，数量: {len(banned_ips)}")
         if banned_ips:
-            send_banned_ips(banned_ips, server_url, mac_address, logger, token)
+            send_banned_ips(banned_ips, server_url, ip_address, logger, token)
         else:
             logger.info("未找到被封禁的IP。")
 
-        unknown_ips = get_unknown_ips(server_url, mac_address, logger, token)
+        logger.info("正在获取未知IP...")
+        unknown_ips = get_unknown_ips(server_url, ip_address, logger, token)
+        logger.info(f"获取未知IP完成，响应类型: {type(unknown_ips).__name__}, 值: {unknown_ips}")
         if unknown_ips:
-            ip_addresses = [ip['ip_address'] for ip in unknown_ips]
-            add_ips_to_fail2ban(ip_addresses, jail, logger)
+            # 检查unknown_ips是否为字典且包含'items'键
+            if isinstance(unknown_ips, dict) and 'items' in unknown_ips:
+                ip_addresses = [ip.get('ip', '') for ip in unknown_ips['items'] if isinstance(ip, dict)]
+            elif isinstance(unknown_ips, list):
+                ip_addresses = [ip.get('ip_address', '') for ip in unknown_ips if isinstance(ip, dict)]
+            else:
+                logger.warning(f"未知IP数据格式异常: {unknown_ips}")
+                ip_addresses = []
+            logger.info(f"准备添加到Fail2Ban的IP数量: {len(ip_addresses)}, IP列表: {ip_addresses}")
+            if ip_addresses:
+                add_ips_to_fail2ban(ip_addresses, jail, logger)
         else:
             logger.info("未找到未知IP。")
 
+        logger.info("正在获取允许的IP...")
         allowed_ips = get_allowed_ips(server_url, logger, token)
+        logger.info(f"获取允许IP完成，响应类型: {type(allowed_ips).__name__}, 值: {allowed_ips}")
         if allowed_ips:
-            ip_addresses = [ip['ip_address'] for ip in allowed_ips]
-            allow_ips_in_fail2ban(ip_addresses, jail, logger)
+            # 检查allowed_ips是否为字典且包含'items'键
+            if isinstance(allowed_ips, dict) and 'items' in allowed_ips:
+                ip_addresses = [ip.get('ip', '') for ip in allowed_ips['items'] if isinstance(ip, dict)]
+            elif isinstance(allowed_ips, list):
+                ip_addresses = [ip.get('ip_address', '') for ip in allowed_ips if isinstance(ip, dict)]
+            else:
+                logger.warning(f"允许IP数据格式异常: {allowed_ips}")
+                ip_addresses = []
+            logger.info(f"准备在Fail2Ban中允许的IP数量: {len(ip_addresses)}, IP列表: {ip_addresses}")
+            if ip_addresses:
+                allow_ips_in_fail2ban(ip_addresses, jail, logger)
         else:
             logger.info("未找到允许的IP。")
 
     except Exception as e:
-        print(f"主函数出错: {e}")
-        raise
+        logger.error(f"主函数出错: {e}")
+        import traceback
+        logger.error(f"错误堆栈: {traceback.format_exc()}")
+
 
 if __name__ == '__main__':
     main()
+
+
+
+

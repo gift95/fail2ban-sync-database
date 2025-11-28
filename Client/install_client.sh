@@ -3,7 +3,6 @@
 # 客户端安装目录
 INSTALL_DIR="/opt/fail2bansync-client"
 CLIENT_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/client.py"
-IPS_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/get_ips.py"
 CONFIG_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/clientconfig.ini"
 
 # 从命令行参数获取服务器地址和令牌
@@ -42,16 +41,6 @@ fi
 echo "client.py 已下载并强制覆盖（如果文件已存在）"
 chown "$USER":"$USER" "$INSTALL_DIR/client.py"
 echo "client.py 下载成功"
-
-if ! curl -s -f -o "$INSTALL_DIR/get_ips.py" "$IPS_FILE"; then
-    echo "错误: 下载get_ips.py失败!"
-    exit 1
-fi
-# 设置执行权限
-chmod +x "$INSTALL_DIR/get_ips.py"
-echo "get_ips.py 已下载并强制覆盖（如果文件已存在）"
-chown "$USER":"$USER" "$INSTALL_DIR/get_ips.py"
-echo "get_ips.py 下载成功"
 
 # 4. 从远程URL下载配置文件
 echo "正在从远程服务器下载配置文件..."
@@ -100,7 +89,7 @@ else
 fi
 chown "$USER":"$USER" "$INSTALL_DIR/clientconfig.ini"
 
-# 5. 安装依赖
+# 5. 安装依赖（包括socket模块，但socket是Python标准库，不需要额外安装）
 pip3 install --user requests
 
 # 6. 创建systemd服务文件
