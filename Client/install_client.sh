@@ -93,7 +93,7 @@ pip3 install --user requests
 
 # 6. 创建systemd服务文件
 echo "创建systemd服务文件..."
-SERVICE_FILE="/etc/systemd/system/fail2ban-sync-client.service"
+SERVICE_FILE="/etc/systemd/system/fail2bansync-client.service"
 
 sudo bash -c "cat > $SERVICE_FILE" <<EOF
 [Unit]
@@ -116,8 +116,8 @@ EOF
 sudo systemctl daemon-reload
 
 # 启动并启用服务
-sudo systemctl enable fail2ban-sync-client.service
-sudo systemctl start fail2ban-sync-client.service
+sudo systemctl enable fail2bansync-client.service
+sudo systemctl start fail2bansync-client.service
 
 echo
 echo "完成!"
@@ -126,14 +126,14 @@ if [ -z "$TOKEN" ]; then
     echo "请在 $INSTALL_DIR/clientconfig.ini 中输入相应的令牌 [auth] token=..."
 fi
 echo "日志位于 $INSTALL_DIR/client.log"
-echo "系统日志可通过: journalctl -u fail2ban-sync-client.service 查看"
+echo "系统日志可通过: journalctl -u fail2bansync-client.service 查看"
 echo
 echo "客户端已作为systemd服务安装并启动。"
 echo "管理命令:"
-echo "  - 启动服务: sudo systemctl start fail2ban-sync-client.service"
-echo "  - 停止服务: sudo systemctl stop fail2ban-sync-client.service"
-echo "  - 重启服务: sudo systemctl restart fail2ban-sync-client.service"
-echo "  - 查看状态: sudo systemctl status fail2ban-sync-client.service"
+echo "  - 启动服务: sudo systemctl start fail2bansync-client.service"
+echo "  - 停止服务: sudo systemctl stop fail2bansync-client.service"
+echo "  - 重启服务: sudo systemctl restart fail2bansync-client.service"
+echo "  - 查看状态: sudo systemctl status fail2bansync-client.service"
 echo
 echo "客户端将每60秒自动运行一次（通过服务的RestartSec配置）"
 echo
