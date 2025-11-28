@@ -28,43 +28,6 @@ DEFAULT_CLIENT_CONFIG = {
     }
 }
 
-def load_config():
-    """从文件加载配置或使用默认值"""
-    config = configparser.ConfigParser()
-    config.read_dict({'DEFAULT': DEFAULT_CLIENT_CONFIG})
-
-    # 使用绝对路径获取配置文件，避免工作目录问题
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    config_file_path = os.path.join(script_dir, 'clientconfig.ini')
-    
-    if os.path.exists(config_file_path):
-        config.read(config_file_path)
-        print(f"已加载配置文件: {config_file_path}")
-    else:
-        print(f"未找到配置文件: {config_file_path}，使用默认配置")
-
-    token = ""
-    if config.has_option('auth', 'token'):
-        token = config.get('auth', 'token')
-
-    return {
-        'server': {
-            'host': config.get('server', 'host', fallback='192.168.1.1'),
-            'port': config.get('server', 'port', fallback='5000'),
-            'protocol': config.get('server', 'protocol', fallback='http')
-        },
-        'logging': {
-            'log_file': config.get('logging', 'log_file', fallback='client.log'),
-            'max_bytes': config.get('logging', 'max_bytes', fallback='1048576'),
-            'backup_count': config.get('logging', 'backup_count', fallback='3')
-        },
-        'fail2ban': {
-            'jail': config.get('fail2ban', 'jail', fallback='sshd')
-        },
-        'auth': {
-            'token': token
-        }
-    }
 
 def setup_logging(log_file, max_bytes, backup_count):
     logger = logging.getLogger('ip_client')
@@ -102,6 +65,43 @@ def setup_logging(log_file, max_bytes, backup_count):
 _banned_ips_cache = {}
 _cache_timestamp = {}
 CACHE_TTL = 30  # 缓存有效期（秒）
+def load_config():
+    """从文件加载配置或使用默认值"""
+    config = configparser.ConfigParser()
+    config.read_dict({'DEFAULT': DEFAULT_CLIENT_CONFIG})
+
+    # 使用绝对路径获取配置文件，避免工作目录问题
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    config_file_path = os.path.join(script_dir, 'clientconfig.ini')
+    
+    if os.path.exists(config_file_path):
+        config.read(config_file_path)
+        logger.info(f"已加载配置文件: {config_file_path}")
+    else:
+        logger.info(f"未找到配置文件: {config_file_path}，使用默认配置")
+
+    token = ""
+    if config.has_option('auth', 'token'):
+        token = config.get('auth', 'token')
+
+    return {
+        'server': {
+            'host': config.get('server', 'host', fallback='192.168.1.1'),
+            'port': config.get('server', 'port', fallback='5000'),
+            'protocol': config.get('server', 'protocol', fallback='http')
+        },
+        'logging': {
+            'log_file': config.get('logging', 'log_file', fallback='client.log'),
+            'max_bytes': config.get('logging', 'max_bytes', fallback='1048576'),
+            'backup_count': config.get('logging', 'backup_count', fallback='3')
+        },
+        'fail2ban': {
+            'jail': config.get('fail2ban', 'jail', fallback='sshd')
+        },
+        'auth': {
+            'token': token
+        }
+    }
 
 def get_banned_ips(jail):
     """
@@ -145,7 +145,7 @@ def get_local_ip_address():
         hostname = socket.gethostname()
         return hostname
     except Exception as e:
-        print(f"获取主机名时出错: {e}")
+        logger.error(f"获取主机名时出错: {e}")
         return None
 
 def send_banned_ips(banned_ips, server_url, ip_address, logger, token):
