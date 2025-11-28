@@ -1,5 +1,5 @@
 import sqlite3
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, session
 from datetime import datetime, timedelta
 import configparser
 import logging
@@ -8,7 +8,8 @@ import os
 import re
 import time
 from contextlib import closing
-from flask_httpauth import HTTPTokenAuth
+from flask_httpauth import HTTPTokenAuth, HTTPBasicAuth
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # 获取真实IP地址（考虑代理情况）
 def get_client_ip():
@@ -246,6 +247,24 @@ TOKENS = config['api_tokens']
 # 添加测试令牌（用于开发测试）
 TOKENS['test_token_123'] = 'test_client'
 
+# 用户名密码认证（用于Web界面）
+web_auth = HTTPBasicAuth()
+# 初始化用户数据库（实际项目中应该从配置文件或数据库加载）
+users = {
+    "admin": generate_password_hash("admin123")  # 默认用户名: admin, 密码: admin123
+}
+
+@web_auth.verify_password
+def verify_password(username, password):
+    if username in users and check_password_hash(users[username], password):
+        session['username'] = username
+        return username
+    return None
+
+@web_auth.error_handler
+def unauthorized():  
+    return render_template('login.html', error='用户名或密码错误'), 401
+
 @auth.verify_token
 def verify_token(token):
     # 返回token对应的客户端名称
@@ -391,6 +410,65 @@ def get_ip_list(status):
         if conn:
             db_pool.return_connection(conn)
 
+@app.route('/allow_ip', methods=['POST'])
+@auth.login_required
+def allow_ip():
+    update_ip_status()
+    
+    # 获取真实客户端IP和认证后的客户端名称
+    client_ip = get_client_ip()
+    client_name = auth.current_user()
+    
+    data = request.json
+    ip = data.get('ip')
+    
+    if not ip:
+        logger.warning(f"客户端 {client_name} ({client_ip}) 请求放行IP但未提供IP地址")
+        return jsonify({"error": "需要IP地址"}), 400
+
+    conn = None
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        conn.execute('BEGIN TRANSACTION')
+
+        # 检查IP是否存在且被封禁
+        cursor.execute('''
+            SELECT status FROM ip_addresses WHERE ip_address = ?
+        ''', (ip,))
+        result = cursor.fetchone()
+        
+        if not result:
+            logger.info(f"客户端 {client_name} ({client_ip}) 请求放行IP {ip}，但该IP不存在")
+            return jsonify({"error": "IP地址不存在"}), 404
+        
+        current_status = result[0]
+        
+        if current_status != 'blocked':
+            logger.info(f"客户端 {client_name} ({client_ip}) 请求放行IP {ip}，但该IP当前状态为 {current_status}")
+            return jsonify({"error": f"IP地址当前状态为 {current_status}，不需要放行"}), 400
+        
+        # 将IP设置为allowed状态
+        cursor.execute('''
+            UPDATE ip_addresses
+            SET status = 'allowed', allowed_since = ?
+            WHERE ip_address = ? AND status = 'blocked'
+        ''', (datetime.now(), ip))
+        
+        conn.commit()
+        logger.info(f"客户端 {client_name} ({client_ip}) 已手动放行IP {ip}")
+        return jsonify({"message": f"IP地址 {ip} 已成功放行"}), 200
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"客户端 {client_name} ({client_ip}) 放行IP {ip} 时出错: {e}")
+        return jsonify({"error": "服务器内部错误"}), 500
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
+
 # API端点路由
 @app.route('/get_ips', methods=['GET'])
 def get_ips():
@@ -404,6 +482,470 @@ def get_allowed_ips():
 def get_known_ips():
     return get_ip_list('known')
 
+# Web界面路由
+@app.route('/')
+def index():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    return redirect(url_for('dashboard'))
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    error = None
+    if request.method == 'POST':
+        username = request.form['username']
+        password = request.form['password']
+        if username in users and check_password_hash(users[username], password):
+            session['username'] = username
+            return redirect(url_for('dashboard'))
+        else:
+            error = '用户名或密码错误'
+    return render_template('login.html', error=error)
+
+@app.route('/logout')
+def logout():
+    session.pop('username', None)
+    return redirect(url_for('login'))
+
+@app.route('/dashboard')
+def dashboard():
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    
+    update_ip_status()
+    conn = None
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        
+        # 获取搜索和分页参数
+        search_ip = request.args.get('search_ip', '').strip()
+        
+        # 封禁IP的分页
+        blocked_page = int(request.args.get('blocked_page', 1))
+        blocked_per_page = 50
+        blocked_offset = (blocked_page - 1) * blocked_per_page
+        
+        # 已放行IP的分页
+        allowed_page = int(request.args.get('allowed_page', 1))
+        allowed_per_page = 50
+        allowed_offset = (allowed_page - 1) * allowed_per_page
+        
+        # 查询被封禁的IP，支持搜索过滤和分页
+        if search_ip:
+            cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ? AND ip_address LIKE ?', ('blocked', f'%{search_ip}%'))
+            blocked_total = cursor.fetchone()[0]
+            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? AND ip_address LIKE ? LIMIT ? OFFSET ?', 
+                          ('blocked', f'%{search_ip}%', blocked_per_page, blocked_offset))
+        else:
+            cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ?', ('blocked',))
+            blocked_total = cursor.fetchone()[0]
+            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? LIMIT ? OFFSET ?', 
+                          ('blocked', blocked_per_page, blocked_offset))
+        blocked_ips = cursor.fetchall()
+        blocked_total_pages = (blocked_total + blocked_per_page - 1) // blocked_per_page
+        
+        # 查询已放行的IP，支持搜索过滤和分页
+        if search_ip:
+            cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ? AND ip_address LIKE ?', ('allowed', f'%{search_ip}%'))
+            allowed_total = cursor.fetchone()[0]
+            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? AND ip_address LIKE ? LIMIT ? OFFSET ?', 
+                          ('allowed', f'%{search_ip}%', allowed_per_page, allowed_offset))
+        else:
+            cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ?', ('allowed',))
+            allowed_total = cursor.fetchone()[0]
+            cursor.execute('SELECT * FROM ip_addresses WHERE status = ? LIMIT ? OFFSET ?', 
+                          ('allowed', allowed_per_page, allowed_offset))
+        allowed_ips = cursor.fetchall()
+        allowed_total_pages = (allowed_total + allowed_per_page - 1) // allowed_per_page
+        
+        return render_template('dashboard.html', 
+                             blocked_ips=blocked_ips, 
+                             allowed_ips=allowed_ips,
+                             username=session['username'],
+                             search_ip=search_ip,
+                             # 封禁IP的分页信息
+                             blocked_page=blocked_page,
+                             blocked_per_page=blocked_per_page,
+                             blocked_total=blocked_total,
+                             blocked_total_pages=blocked_total_pages,
+                             # 已放行IP的分页信息
+                             allowed_page=allowed_page,
+                             allowed_per_page=allowed_per_page,
+                             allowed_total=allowed_total,
+                             allowed_total_pages=allowed_total_pages)
+    except Exception as e:
+        logger.error(f"获取IP列表时出错: {e}")
+        flash('获取IP列表时出错', 'error')
+        return render_template('dashboard.html', blocked_ips=[], allowed_ips=[], username=session['username'])
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
+
+@app.route('/web_allow_ip/<ip>', methods=['POST'])
+def web_allow_ip(ip):
+    if 'username' not in session:
+        return redirect(url_for('login'))
+    
+    update_ip_status()
+    conn = None
+    
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        conn.execute('BEGIN TRANSACTION')
+
+        # 检查IP是否存在且被封禁
+        cursor.execute('''
+            SELECT status FROM ip_addresses WHERE ip_address = ?
+        ''', (ip,))
+        result = cursor.fetchone()
+        
+        if not result:
+            flash(f'IP地址 {ip} 不存在', 'error')
+            return redirect(url_for('dashboard'))
+        
+        current_status = result[0]
+        
+        if current_status != 'blocked':
+            flash(f'IP地址 {ip} 当前状态为 {current_status}，不需要放行', 'warning')
+            return redirect(url_for('dashboard'))
+        
+        # 将IP设置为allowed状态
+        cursor.execute('''
+            UPDATE ip_addresses
+            SET status = 'allowed', allowed_since = ?
+            WHERE ip_address = ? AND status = 'blocked'
+        ''', (datetime.now(), ip))
+        
+        conn.commit()
+        logger.info(f"用户 {session['username']} 已手动放行IP {ip}")
+        flash(f'IP地址 {ip} 已成功放行', 'success')
+        return redirect(url_for('dashboard'))
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"用户 {session['username']} 放行IP {ip} 时出错: {e}")
+        flash('放行IP时发生错误', 'error')
+        return redirect(url_for('dashboard'))
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
+
+# 确保templates文件夹存在
+if not os.path.exists('templates'):
+    os.makedirs('templates')
+
+# 设置密钥用于session加密
+app.secret_key = os.urandom(24)
+# 设置session过期时间
+app.permanent_session_lifetime = timedelta(minutes=30)
+
+# 创建必要的HTML模板
+with open('templates/login.html', 'w', encoding='utf-8') as f:
+    f.write('''
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - Fail2BanSync管理界面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        .login-container {
+            background-color: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            width: 300px;
+        }
+        h2 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #666;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        button {
+            width: 100%;
+            padding: 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .error {
+            color: red;
+            text-align: center;
+            margin-top: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h2>Fail2BanSync管理界面</h2>
+        {% if error %}
+        <div class="error">{{ error }}</div>
+        {% endif %}
+        <form method="post">
+            <div class="form-group">
+                <label for="username">用户名</label>
+                <input type="text" id="username" name="username" required>
+            </div>
+            <div class="form-group">
+                <label for="password">密码</label>
+                <input type="password" id="password" name="password" required>
+            </div>
+            <button type="submit">登录</button>
+        </form>
+    </div>
+</body>
+</html>
+''')
+
+with open('templates/dashboard.html', 'w', encoding='utf-8') as f:
+    f.write('''
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fail2BanSync管理界面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .header {
+            background-color: #333;
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .logout {
+            color: white;
+            text-decoration: none;
+            padding: 8px 15px;
+            background-color: #555;
+            border-radius: 4px;
+        }
+        .logout:hover {
+            background-color: #777;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .message {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .section {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #333;
+            margin-top: 0;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .action-btn {
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .action-btn:hover {
+            background-color: #45a049;
+        }
+        .status {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.blocked {
+            background-color: #ffdddd;
+            color: #d8000c;
+        }
+        .status.allowed {
+            background-color: #ddffdd;
+            color: #4f8a10;
+        }
+        .status.known {
+            background-color: #ffffcc;
+            color: #9f6000;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Fail2BanSync管理界面</h1>
+        <div>
+            <span>欢迎，{{ username }} | </span>
+            <a href="{{ url_for('logout') }}" class="logout">退出登录</a>
+        </div>
+    </div>
+    
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="message {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="section">
+            <h2>被封禁的IP地址</h2>
+            {% if blocked_ips %}
+            <table>
+                <tr>
+                    <th>IP地址</th>
+                    <th>描述</th>
+                    <th>状态</th>
+                    <th>报告来源</th>
+                    <th>封禁至</th>
+                    <th>封禁次数</th>
+                    <th>操作</th>
+                </tr>
+                {% for ip in blocked_ips %}
+                <tr>
+                    <td>{{ ip[1] }}</td>
+                    <td>{{ ip[2] or '-' }}</td>
+                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
+                    <td>{{ ip[4] }}</td>
+                    <td>{{ ip[5] }}</td>
+                    <td>{{ ip[7] }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('web_allow_ip', ip=ip[1]) }}">
+                            <button type="submit" class="action-btn">放行</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% else %}
+            <div class="empty-state">当前没有被封禁的IP地址</div>
+            {% endif %}
+        </div>
+        
+        <div class="section">
+            <h2>已放行的IP地址</h2>
+            {% if allowed_ips %}
+            <table>
+                <tr>
+                    <th>IP地址</th>
+                    <th>描述</th>
+                    <th>状态</th>
+                    <th>报告来源</th>
+                    <th>封禁次数</th>
+                    <th>放行时间</th>
+                </tr>
+                {% for ip in allowed_ips %}
+                <tr>
+                    <td>{{ ip[1] }}</td>
+                    <td>{{ ip[2] or '-' }}</td>
+                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
+                    <td>{{ ip[4] }}</td>
+                    <td>{{ ip[7] }}</td>
+                    <td>{{ ip[6] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% else %}
+            <div class="empty-state">当前没有已放行的IP地址</div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
+''')
 
 if __name__ == '__main__':
     try:
