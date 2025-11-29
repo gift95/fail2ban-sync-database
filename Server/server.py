@@ -1,5 +1,6 @@
 import sqlite3
 from flask import Flask, request, jsonify, render_template, redirect, url_for, flash, session
+from flask_compress import Compress
 from datetime import datetime, timedelta
 import configparser
 import logging
@@ -32,6 +33,15 @@ def get_client_ip():
 # 初始化Flask应用
 app = Flask(__name__)
 DATABASE = 'ip_management.db'
+
+# 配置gzip压缩
+compress = Compress()
+compress.init_app(app)
+
+# 压缩配置选项
+app.config['COMPRESS_MIMETYPES'] = ['text/html', 'text/css', 'text/xml', 'application/json', 'application/javascript']
+app.config['COMPRESS_LEVEL'] = 6  # 压缩级别1-9，6是平衡压缩率和速度的选择
+app.config['COMPRESS_MIN_SIZE'] = 500  # 只有大于500字节的响应才会被压缩
 
 # 加载配置（启动时一次性加载）
 def load_config():
@@ -142,6 +152,12 @@ def init_db():
                 block_count INTEGER DEFAULT 1
             )
         ''')
+        
+        # 添加数据库索引以优化查询性能
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_ip ON ip_addresses(ip_address)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_status ON ip_addresses(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_status_ip ON ip_addresses(status, ip_address)')
+        
         conn.commit()
 
 # 创建数据库连接池
@@ -729,5 +745,7 @@ if __name__ == '__main__':
         # 关闭所有数据库连接
         db_pool.close_all()
         logger.info("服务器已关闭，所有资源已释放")
+
+
 
 
