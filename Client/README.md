@@ -1,6 +1,5 @@
 # Fail2BanSync 客户端
 
-![Fail2BanSync Logo](https://via.placeholder.com/80x80?text=F2BS)
 
 ## � 目录
 
@@ -362,20 +361,14 @@ curl -X GET http://server_ip:5000/get_ips -H "Authorization: Bearer your_token"
 # 1. 停止当前服务
 sudo systemctl stop fail2bansync-client.service
 
-# 2. 备份当前配置
-cp /opt/fail2bansync-client/clientconfig.ini /tmp/
 
-# 3. 下载新版本的 client.py
-cd /opt/fail2bansync-client
-sudo curl -s -o client.py https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/client.py
+# 2. 下载新版本的 client.py
+sudo curl -s -o /opt/fail2bansync-client/client.py https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/client.py
 
-# 4. 恢复配置文件
-cp /tmp/clientconfig.ini /opt/fail2bansync-client/
-
-# 5. 重启服务
+# 3. 重启服务
 sudo systemctl start fail2bansync-client.service
 
-# 6. 验证服务状态
+# 4. 验证服务状态
 sudo systemctl status fail2bansync-client.service
 ```
 
