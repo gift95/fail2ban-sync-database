@@ -73,7 +73,7 @@ bantime = -1
 1. **准备安装文件**：
    ```bash
    # 克隆项目
-   git clone https://gitea.yxliu.cc/gift95/fail2ban-sync.git
+   git clone https://github.com/gift95/fail2ban-sync-database.git
    cd fail2ban-sync/Server
    ```
 
@@ -99,7 +99,7 @@ bantime = -1
 1. **准备安装文件**：
    ```bash
    # 在客户端服务器上克隆项目
-   git clone https://gitea.yxliu.cc/gift95/fail2ban-sync.git
+   git clone https://github.com/gift95/fail2ban-sync-database.git
    cd fail2ban-sync/Client
    ```
 
@@ -253,14 +253,14 @@ sudo systemctl status fail2bansync-client
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证。详情请参阅 [LICENSE](https://gitea.yxliu.cc/gift95/fail2ban-sync/src/branch/main/LICENSE) 文件。
+本项目采用 MIT 许可证。详情请参阅 [LICENSE](https://github.com/gift95/fail2ban-sync-database/src/branch/main/LICENSE) 文件。
 
 ## 📞 联系我们
 
 如有疑问、建议或需要帮助，请联系项目维护者。
 
-- **项目主页**：[https://gitea.yxliu.cc/gift95/fail2ban-sync](https://gitea.yxliu.cc/gift95/fail2ban-sync)
-- **问题反馈**：[https://gitea.yxliu.cc/gift95/fail2ban-sync/issues](https://gitea.yxliu.cc/gift95/fail2ban-sync/issues)
+- **项目主页**：[https://github.com/gift95/fail2ban-sync-database](https://github.com/gift95/fail2ban-sync-database)
+- **问题反馈**：[https://github.com/gift95/fail2ban-sync-database/issues](https://github.com/gift95/fail2ban-sync-database/issues)
 
 ---
 
@@ -268,6 +268,7 @@ sudo systemctl status fail2bansync-client
 **版本**：v2.0.0  
 
 **Fail2BanSync – 现代化多服务器 IP 封禁协同解决方案**
+
 
 
 
