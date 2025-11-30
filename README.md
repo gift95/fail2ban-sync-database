@@ -60,7 +60,14 @@ Fail2BanSync 是一个强大的中央 IP 同步系统，专门为运行 Fail2Ban
 - **Python 3**：需要 Python 3.6 或更高版本
 - **权限**：安装过程需要 root 权限
 - **Fail2Ban**：客户端服务器需已安装并配置 Fail2Ban
-
+```
+#请将bantime设置为永久 IP的封禁解除由server管理
+ nano  /etc/fail2ban/jail.local                                                                                                                                      ─╯
+[DEFAULT]
+....
+bantime = -1
+...
+```
 ### 服务器安装
 
 1. **准备安装文件**：
@@ -261,5 +268,6 @@ sudo systemctl status fail2bansync-client
 **版本**：v2.0.0  
 
 **Fail2BanSync – 现代化多服务器 IP 封禁协同解决方案**
+
 
 
