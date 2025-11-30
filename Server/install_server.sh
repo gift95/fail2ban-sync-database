@@ -3,10 +3,10 @@
 # 可调整的变量:
 INSTALL_DIR="/opt/fail2bansync"
 SERVER_USER="fail2bansync"
-SERVER_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/server.py"
+SERVER_FILE="https://github.com/gift95/fail2ban-sync-database/raw/refs/heads/main/Server/server.py"
 # 模板文件URL
-DASHBOARD_TEMPLATE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/templates/dashboard.html"
-LOGIN_TEMPLATE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/templates/login.html"
+DASHBOARD_TEMPLATE="https://github.com/gift95/fail2ban-sync-database/raw/refs/heads/main/Server/templates/dashboard.html"
+LOGIN_TEMPLATE="https://github.com/gift95/fail2ban-sync-database/raw/refs/heads/main/Server/templates/login.html"
 SERVICE_NAME="fail2bansync-server"
 
 echo "==== Fail2BanSync 服务器安装器 ===="
