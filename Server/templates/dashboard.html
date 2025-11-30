@@ -1,0 +1,379 @@
+
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Fail2BanSync管理界面</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 0;
+        }
+        .header {
+            background-color: #333;
+            color: white;
+            padding: 15px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .logout {
+            color: white;
+            text-decoration: none;
+            padding: 8px 15px;
+            background-color: #555;
+            border-radius: 4px;
+        }
+        .logout:hover {
+            background-color: #777;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 0 20px;
+        }
+        .message {
+            padding: 10px;
+            margin-bottom: 20px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .warning {
+            background-color: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .section {
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #333;
+            margin-top: 0;
+            border-bottom: 2px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+        .action-btn {
+            padding: 5px 10px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 14px;
+        }
+        .action-btn:hover {
+            background-color: #45a049;
+        }
+        .status {
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .status.blocked {
+            background-color: #ffdddd;
+            color: #d8000c;
+        }
+        .status.allowed {
+            background-color: #ddffdd;
+            color: #4f8a10;
+        }
+        .status.known {
+            background-color: #ffffcc;
+            color: #9f6000;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+            font-style: italic;
+        }
+        .search-form {
+            margin-bottom: 20px;
+            padding: 15px;
+            background-color: #f9f9f9;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .search-form input {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .search-form button {
+            padding: 8px 20px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .search-form button:hover {
+            background-color: #45a049;
+        }
+        .search-form .clear-search {
+            color: #666;
+            text-decoration: none;
+            font-size: 14px;
+        }
+        .search-form .clear-search:hover {
+            color: #333;
+            text-decoration: underline;
+        }
+        .pagination {
+            margin-top: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 10px;
+        }
+        .pagination-info {
+            color: #666;
+            font-size: 14px;
+        }
+        .pagination-controls {
+            display: flex;
+            gap: 5px;
+        }
+        .pagination a {
+            padding: 6px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            color: #333;
+            text-decoration: none;
+            background-color: white;
+        }
+        .pagination a:hover {
+            background-color: #f5f5f5;
+        }
+        .pagination a.active {
+            background-color: #4CAF50;
+            color: white;
+            border-color: #4CAF50;
+        }
+        .pagination a.disabled {
+            color: #ddd;
+            cursor: not-allowed;
+            background-color: #f9f9f9;
+        }
+        .pagination a.disabled:hover {
+            background-color: #f9f9f9;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Fail2BanSync管理界面</h1>
+        <div>
+            <span>欢迎，{{ username }} | </span>
+            <a href="{{ url_for('logout') }}" class="logout">退出登录</a>
+        </div>
+    </div>
+    
+    <div class="container">
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                {% for category, message in messages %}
+                    <div class="message {{ category }}">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="search-form">
+            <form method="get" action="{{ url_for('dashboard') }}">
+                <input type="text" name="search_ip" placeholder="搜索IP地址..." value="{{ search_ip or '' }}">
+                <button type="submit">搜索</button>
+                {% if search_ip %}
+                <a href="{{ url_for('dashboard') }}" class="clear-search">清除搜索</a>
+                {% endif %}
+            </form>
+        </div>
+
+        <div class="section">
+            <h2>被封禁的IP地址</h2>
+            {% if blocked_ips %}
+            <table>
+                <tr>
+                    <th>IP地址</th>
+                    <th>描述</th>
+                    <th>状态</th>
+                    <th>报告来源</th>
+                    <th>封禁至</th>
+                    <th>封禁次数</th>
+                    <th>操作</th>
+                </tr>
+                {% for ip in blocked_ips %}
+                <tr>
+                    <td>{{ ip[1] }}</td>
+                    <td>{{ ip[2] or '-' }}</td>
+                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
+                    <td>{{ ip[4] }}</td>
+                    <td>{{ ip[5] }}</td>
+                    <td>{{ ip[7] }}</td>
+                    <td>
+                        <form method="post" action="{{ url_for('web_allow_ip', ip=ip[1]) }}">
+                            <button type="submit" class="action-btn">放行</button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% else %}
+            <div class="empty-state">当前没有被封禁的IP地址</div>
+            {% endif %}
+            
+            {% if blocked_total_pages > 1 %}
+            <div class="pagination">
+                <div class="pagination-info">
+                    显示 {{ blocked_page }} / {{ blocked_total_pages }} 页，共 {{ blocked_total }} 条记录
+                </div>
+                <div class="pagination-controls">
+                    <a href="{{ url_for('dashboard', blocked_page=1, allowed_page=allowed_page, search_ip=search_ip) }}" {% if blocked_page == 1 %}class="disabled"{% endif %}>
+                        首页
+                    </a>
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page-1, allowed_page=allowed_page, search_ip=search_ip) }}" {% if blocked_page == 1 %}class="disabled"{% endif %}>
+                        上一页
+                    </a>
+                    
+                    {% set start_page = [1, blocked_page-2]|max %}
+                    {% set end_page = [blocked_total_pages, blocked_page+2]|min %}
+                    
+                    {% if start_page > 1 %}
+                    <span>...</span>
+                    {% endif %}
+                    
+                    {% for page in range(start_page, end_page+1) %}
+                    <a href="{{ url_for('dashboard', blocked_page=page, allowed_page=allowed_page, search_ip=search_ip) }}" {% if page == blocked_page %}class="active"{% endif %}>
+                        {{ page }}
+                    </a>
+                    {% endfor %}
+                    
+                    {% if end_page < blocked_total_pages %}
+                    <span>...</span>
+                    {% endif %}
+                    
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page+1, allowed_page=allowed_page, search_ip=search_ip) }}" {% if blocked_page == blocked_total_pages %}class="disabled"{% endif %}>
+                        下一页
+                    </a>
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_total_pages, allowed_page=allowed_page, search_ip=search_ip) }}" {% if blocked_page == blocked_total_pages %}class="disabled"{% endif %}>
+                        末页
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+        
+        <div class="section">
+            <h2>已放行的IP地址</h2>
+            {% if allowed_ips %}
+            <table>
+                <tr>
+                    <th>IP地址</th>
+                    <th>描述</th>
+                    <th>状态</th>
+                    <th>报告来源</th>
+                    <th>封禁次数</th>
+                    <th>放行时间</th>
+                </tr>
+                {% for ip in allowed_ips %}
+                <tr>
+                    <td>{{ ip[1] }}</td>
+                    <td>{{ ip[2] or '-' }}</td>
+                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
+                    <td>{{ ip[4] }}</td>
+                    <td>{{ ip[7] }}</td>
+                    <td>{{ ip[6] }}</td>
+                </tr>
+                {% endfor %}
+            </table>
+            {% else %}
+            <div class="empty-state">当前没有已放行的IP地址</div>
+            {% endif %}
+            
+            {% if allowed_total_pages > 1 %}
+            <div class="pagination">
+                <div class="pagination-info">
+                    显示 {{ allowed_page }} / {{ allowed_total_pages }} 页，共 {{ allowed_total }} 条记录
+                </div>
+                <div class="pagination-controls">
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page, allowed_page=1, search_ip=search_ip) }}" {% if allowed_page == 1 %}class="disabled"{% endif %}>
+                        首页
+                    </a>
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page, allowed_page=allowed_page-1, search_ip=search_ip) }}" {% if allowed_page == 1 %}class="disabled"{% endif %}>
+                        上一页
+                    </a>
+                    
+                    {% set start_page = [1, allowed_page-2]|max %}
+                    {% set end_page = [allowed_total_pages, allowed_page+2]|min %}
+                    
+                    {% if start_page > 1 %}
+                    <span>...</span>
+                    {% endif %}
+                    
+                    {% for page in range(start_page, end_page+1) %}
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page, allowed_page=page, search_ip=search_ip) }}" {% if page == allowed_page %}class="active"{% endif %}>
+                        {{ page }}
+                    </a>
+                    {% endfor %}
+                    
+                    {% if end_page < allowed_total_pages %}
+                    <span>...</span>
+                    {% endif %}
+                    
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page, allowed_page=allowed_page+1, search_ip=search_ip) }}" {% if allowed_page == allowed_total_pages %}class="disabled"{% endif %}>
+                        下一页
+                    </a>
+                    <a href="{{ url_for('dashboard', blocked_page=blocked_page, allowed_page=allowed_total_pages, search_ip=search_ip) }}" {% if allowed_page == allowed_total_pages %}class="disabled"{% endif %}>
+                        末页
+                    </a>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</body>
+</html>
