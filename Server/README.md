@@ -601,25 +601,11 @@ sudo systemctl status fail2bansync-server
 
 ## 📝 常见部署场景
 
-### 场景 1：小型环境（1-10 台服务器）
+### 小型环境（1-10 台服务器）
 
 - 单服务器部署 Fail2BanSync 服务
 - 所有客户端连接到同一中央服务器
 - 使用默认配置即可满足需求
-
-### 场景 2：中型环境（11-50 台服务器）
-
-- 单服务器部署，可能需要增加系统资源
-- 考虑使用 HTTPS 协议增强安全性
-- 配置日志集中管理
-- 定期备份数据库
-
-### 场景 3：大型环境（50+ 台服务器）
-
-- 考虑高可用部署方案
-- 可能需要迁移到更强大的数据库系统
-- 实施严格的访问控制和监控
-- 考虑使用 API 网关进行请求管理
 
 ## 🤝 贡献指南
 
@@ -631,27 +617,4 @@ sudo systemctl status fail2bansync-server
 4. 推送到分支（`git push origin feature/AmazingFeature`）
 5. 打开 Pull Request
 
-## 📄 许可证
 
-本项目采用 MIT 许可证 - 查看 [LICENSE](https://gitea.yxliu.cc/gift95/fail2ban-sync/src/branch/main/LICENSE) 文件了解详情。
-
-## 🆘 支持
-
-如果您在使用过程中遇到问题：
-
-1. 检查 [故障排除](#故障排除) 部分
-2. 查看 [服务器日志](#查看日志) 获取详细错误信息
-3. 查看项目的 [Gitea Issues](https://gitea.yxliu.cc/gift95/fail2ban-sync/issues) 页面
-4. 联系项目维护者获取支持
-
-## 📞 联系我们
-
-- **项目主页**：[https://gitea.yxliu.cc/gift95/fail2ban-sync](https://gitea.yxliu.cc/gift95/fail2ban-sync)
-- **文档**：[README.md](README.md)
-- **问题反馈**：[Gitea Issues](https://gitea.yxliu.cc/gift95/fail2ban-sync/issues)
-
----
-
-**更新日期**：2025年11月  
-**版本**：v2.0.0  
-**Fail2BanSync - 企业级 IP 封禁管理解决方案**
