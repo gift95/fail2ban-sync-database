@@ -2,8 +2,8 @@
 
 # 客户端安装目录
 INSTALL_DIR="/opt/fail2bansync-client"
-CLIENT_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/client.py"
-CONFIG_FILE="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/clientconfig.ini"
+CLIENT_FILE="https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Client/client.py"
+CONFIG_FILE="https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Client/clientconfig.ini"
 
 # 从命令行参数获取服务器地址和令牌
 SERVER_ADDR="${1:-192.168.0.1:5000}"
