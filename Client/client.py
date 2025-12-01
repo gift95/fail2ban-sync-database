@@ -11,6 +11,8 @@ import socket
 from datetime import datetime
 import time
 import sys
+import gzip
+import io
 
 # 添加全局变量用于缓存已获取的封禁IP列表，减少重复调用
 _banned_ips_cache = []
@@ -183,10 +185,6 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
         try:
             # 构建API请求
             url = f"{server_url}/add_ips"
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f"Bearer {token}"
-            }
             
             # 准备请求数据
             data = {
@@ -195,8 +193,36 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
                 'jail': jail
             }
             
-            # 发送请求
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            # 将数据转换为JSON字符串
+            json_data = json.dumps(data)
+            
+            # 根据数据大小决定是否使用gzip压缩（超过1KB时压缩效果明显）
+            json_bytes = json_data.encode('utf-8')
+            if len(json_bytes) > 1024:  # 只有当数据大于1KB时才压缩
+                compressed_data = io.BytesIO()
+                # 设置压缩级别4，平衡压缩率和速度（1-9，默认6）
+                with gzip.GzipFile(fileobj=compressed_data, mode='wb', compresslevel=4) as f:
+                    f.write(json_bytes)
+                compressed_data.seek(0)
+                
+                # 设置请求头，包含Content-Encoding
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Content-Encoding': 'gzip',
+                    'Authorization': f"Bearer {token}"
+                }
+                
+                # 发送压缩后的请求
+                response = requests.post(url, headers=headers, data=compressed_data.read(), timeout=30)
+            else:
+                # 数据较小时直接发送，避免压缩开销
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f"Bearer {token}"
+                }
+                
+                # 直接发送未压缩数据
+                response = requests.post(url, headers=headers, json=data, timeout=30)
             
             # 检查响应状态
             if response.status_code == 200 or response.status_code == 201:
@@ -468,11 +494,15 @@ def main():
             basic_logger.info("远端封禁IP同步完成")
         
         # 发送被封禁的IP到服务器
-        if banned_ips and remote_banned_ips:
-            # 使用已获取的远端封禁IP，不再重复请求
+        if banned_ips:
+            # 使用已获取的远端封禁IP（如果有），不再重复请求
             
             # 比较差异，只获取需要发送的IP（本地有但服务器没有）
-            to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
+            # 如果远端列表为空，则所有本地IP都需要发送
+            if remote_banned_ips:
+                to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
+            else:
+                to_send_ips = banned_ips  # 远端为空时，所有本地封禁IP都需要上传
             
             if to_send_ips:
                 basic_logger.info(f"找到 {len(to_send_ips)} 个需要发送到服务器的IP")
@@ -511,7 +541,6 @@ def add_ips_to_fail2ban(ips, jail, logger):
     for i in range(0, len(ips), batch_size):
         batch = ips[i:i+batch_size]
         logger.info(f"正在处理IP批次 {i//batch_size + 1}/{(len(ips)-1)//batch_size + 1}, 共 {len(batch)} 个IP")
-        
         # 优化2: 对于少量IP使用单命令模式
         if len(batch) <= 5:  # 少量IP仍保持逐个处理以获得更精确的错误报告
             for ip in batch:
@@ -519,14 +548,16 @@ def add_ips_to_fail2ban(ips, jail, logger):
                     subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
                                  capture_output=True, text=True, timeout=5)
                     success_count += 1
+                    logger.info(f"已在Fail2Ban中封禁IP {ip}")
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                     failed_ips.append(ip)
-                    logger.error(f"添加IP {ip} 到Fail2Ban时出错: {str(e)}")
+                    logger.error(f"封禁IP {ip} 到Fail2Ban时出错: {str(e)}")
         else:  # 大量IP使用批处理模式
             try:
                 # 构建命令行参数 - 批处理多个IP
                 # 注意: 这种方式利用fail2ban-client的批处理能力，如果支持
                 # 不支持批处理时会自动降级为逐个处理
+                logger.info(f"在Fail2Ban中封禁IP {batch}")
                 for ip in batch:
                     try:
                         # 使用单独进程但减少不必要的参数
@@ -543,11 +574,13 @@ def add_ips_to_fail2ban(ips, jail, logger):
                         subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
                                      capture_output=True, text=True, timeout=3)
                         success_count += 1
+                        logger.info(f"已添加IP {ip} 到Fail2Ban")
                     except Exception:
                         failed_ips.append(ip)
     
     # 记录统计信息
     logger.info(f"IP封禁操作完成: 成功 {success_count}, 失败 {len(failed_ips)}")
+    logger.info(f"处理IP数量: {len(ips)} 处理IP: {ips}")
     if failed_ips:
         logger.warning(f"以下IP封禁失败: {failed_ips}")
 
