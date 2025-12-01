@@ -196,21 +196,33 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
             # 将数据转换为JSON字符串
             json_data = json.dumps(data)
             
-            # 使用gzip压缩数据
-            compressed_data = io.BytesIO()
-            with gzip.GzipFile(fileobj=compressed_data, mode='wb') as f:
-                f.write(json_data.encode('utf-8'))
-            compressed_data.seek(0)
-            
-            # 设置请求头，包含Content-Encoding
-            headers = {
-                'Content-Type': 'application/json',
-                'Content-Encoding': 'gzip',
-                'Authorization': f"Bearer {token}"
-            }
-            
-            # 发送压缩后的请求
-            response = requests.post(url, headers=headers, data=compressed_data.read(), timeout=30)
+            # 根据数据大小决定是否使用gzip压缩（超过1KB时压缩效果明显）
+            json_bytes = json_data.encode('utf-8')
+            if len(json_bytes) > 1024:  # 只有当数据大于1KB时才压缩
+                compressed_data = io.BytesIO()
+                # 设置压缩级别4，平衡压缩率和速度（1-9，默认6）
+                with gzip.GzipFile(fileobj=compressed_data, mode='wb', compresslevel=4) as f:
+                    f.write(json_bytes)
+                compressed_data.seek(0)
+                
+                # 设置请求头，包含Content-Encoding
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Content-Encoding': 'gzip',
+                    'Authorization': f"Bearer {token}"
+                }
+                
+                # 发送压缩后的请求
+                response = requests.post(url, headers=headers, data=compressed_data.read(), timeout=30)
+            else:
+                # 数据较小时直接发送，避免压缩开销
+                headers = {
+                    'Content-Type': 'application/json',
+                    'Authorization': f"Bearer {token}"
+                }
+                
+                # 直接发送未压缩数据
+                response = requests.post(url, headers=headers, json=data, timeout=30)
             
             # 检查响应状态
             if response.status_code == 200 or response.status_code == 201:

@@ -299,7 +299,26 @@ def add_ips():
     client_ip = get_client_ip()
     client_name = auth.current_user()
     
-    data = request.json
+    # 处理gzip压缩的请求体
+    if request.headers.get('Content-Encoding') == 'gzip':
+        import gzip
+        import io
+        try:
+            # 读取压缩数据
+            compressed_data = request.get_data()
+            # 解压数据
+            gzip_stream = io.BytesIO(compressed_data)
+            with gzip.GzipFile(fileobj=gzip_stream, mode='rb') as f:
+                decompressed_data = f.read()
+            # 解析JSON
+            import json
+            data = json.loads(decompressed_data.decode('utf-8'))
+        except Exception as e:
+            logger.error(f"解压gzip数据失败: {e}")
+            return jsonify({"error": "无效的压缩数据"}), 400
+    else:
+        # 标准JSON请求
+        data = request.json
     ips = data.get('ips', [])
     description = data.get('description', '')
     status = data.get('status', 'blocked')
