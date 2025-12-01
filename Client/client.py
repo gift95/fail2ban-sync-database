@@ -11,6 +11,8 @@ import socket
 from datetime import datetime
 import time
 import sys
+import gzip
+import io
 
 # 添加全局变量用于缓存已获取的封禁IP列表，减少重复调用
 _banned_ips_cache = []
@@ -183,10 +185,6 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
         try:
             # 构建API请求
             url = f"{server_url}/add_ips"
-            headers = {
-                'Content-Type': 'application/json',
-                'Authorization': f"Bearer {token}"
-            }
             
             # 准备请求数据
             data = {
@@ -195,8 +193,24 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
                 'jail': jail
             }
             
-            # 发送请求
-            response = requests.post(url, headers=headers, json=data, timeout=30)
+            # 将数据转换为JSON字符串
+            json_data = json.dumps(data)
+            
+            # 使用gzip压缩数据
+            compressed_data = io.BytesIO()
+            with gzip.GzipFile(fileobj=compressed_data, mode='wb') as f:
+                f.write(json_data.encode('utf-8'))
+            compressed_data.seek(0)
+            
+            # 设置请求头，包含Content-Encoding
+            headers = {
+                'Content-Type': 'application/json',
+                'Content-Encoding': 'gzip',
+                'Authorization': f"Bearer {token}"
+            }
+            
+            # 发送压缩后的请求
+            response = requests.post(url, headers=headers, data=compressed_data.read(), timeout=30)
             
             # 检查响应状态
             if response.status_code == 200 or response.status_code == 201:
