@@ -533,9 +533,10 @@ def add_ips_to_fail2ban(ips, jail, logger):
                     subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
                                  capture_output=True, text=True, timeout=5)
                     success_count += 1
+                    logger.info(f"已在Fail2Ban中封禁IP {ip}")
                 except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
                     failed_ips.append(ip)
-                    logger.error(f"添加IP {ip} 到Fail2Ban时出错: {str(e)}")
+                    logger.error(f"封禁IP {ip} 到Fail2Ban时出错: {str(e)}")
         else:  # 大量IP使用批处理模式
             try:
                 # 构建命令行参数 - 批处理多个IP
@@ -557,6 +558,7 @@ def add_ips_to_fail2ban(ips, jail, logger):
                         subprocess.run(['fail2ban-client', 'set', jail, 'banip', ip], 
                                      capture_output=True, text=True, timeout=3)
                         success_count += 1
+                        logger.info(f"已添加IP {ip} 到Fail2Ban")
                     except Exception:
                         failed_ips.append(ip)
     
