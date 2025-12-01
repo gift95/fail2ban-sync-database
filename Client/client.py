@@ -525,7 +525,6 @@ def add_ips_to_fail2ban(ips, jail, logger):
     for i in range(0, len(ips), batch_size):
         batch = ips[i:i+batch_size]
         logger.info(f"正在处理IP批次 {i//batch_size + 1}/{(len(ips)-1)//batch_size + 1}, 共 {len(batch)} 个IP")
-        
         # 优化2: 对于少量IP使用单命令模式
         if len(batch) <= 5:  # 少量IP仍保持逐个处理以获得更精确的错误报告
             for ip in batch:
@@ -542,6 +541,7 @@ def add_ips_to_fail2ban(ips, jail, logger):
                 # 构建命令行参数 - 批处理多个IP
                 # 注意: 这种方式利用fail2ban-client的批处理能力，如果支持
                 # 不支持批处理时会自动降级为逐个处理
+                logger.info(f"在Fail2Ban中封禁IP {batch}")
                 for ip in batch:
                     try:
                         # 使用单独进程但减少不必要的参数
@@ -564,6 +564,7 @@ def add_ips_to_fail2ban(ips, jail, logger):
     
     # 记录统计信息
     logger.info(f"IP封禁操作完成: 成功 {success_count}, 失败 {len(failed_ips)}")
+    logger.info(f"处理IP数量: {len(ips)} 处理IP: {ips}")
     if failed_ips:
         logger.warning(f"以下IP封禁失败: {failed_ips}")
 
