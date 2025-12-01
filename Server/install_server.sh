@@ -87,7 +87,7 @@ EOF
 fi
 
 # 6. 安装依赖
-sudo pip3 install flask flask_httpauth
+sudo pip3 install flask flask_httpauth flask_compress
 
 # 7. 创建Systemd服务
 sudo tee /etc/systemd/system/${SERVICE_NAME}.service >/dev/null <<EOF

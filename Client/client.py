@@ -496,8 +496,6 @@ def main():
         # 发送被封禁的IP到服务器
         if banned_ips:
             # 使用已获取的远端封禁IP（如果有），不再重复请求
-            
-            # 比较差异，只获取需要发送的IP（本地有但服务器没有）
             # 如果远端列表为空，则所有本地IP都需要发送
             if remote_banned_ips:
                 to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
