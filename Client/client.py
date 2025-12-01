@@ -494,11 +494,15 @@ def main():
             basic_logger.info("远端封禁IP同步完成")
         
         # 发送被封禁的IP到服务器
-        if banned_ips and remote_banned_ips:
-            # 使用已获取的远端封禁IP，不再重复请求
+        if banned_ips:
+            # 使用已获取的远端封禁IP（如果有），不再重复请求
             
             # 比较差异，只获取需要发送的IP（本地有但服务器没有）
-            to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
+            # 如果远端列表为空，则所有本地IP都需要发送
+            if remote_banned_ips:
+                to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
+            else:
+                to_send_ips = banned_ips  # 远端为空时，所有本地封禁IP都需要上传
             
             if to_send_ips:
                 basic_logger.info(f"找到 {len(to_send_ips)} 个需要发送到服务器的IP")
