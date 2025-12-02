@@ -14,16 +14,6 @@ import sys
 import gzip
 import io
 
-# 添加全局变量用于缓存已获取的封禁IP列表，减少重复调用
-_banned_ips_cache = []
-_cache_timestamp = 0
-# 远程IP缓存相关变量
-_remote_banned_ips_cache = []
-_remote_banned_ips_timestamp = 0
-# 远程允许IP缓存相关变量
-_remote_allowed_ips_cache = []
-_remote_allowed_ips_timestamp = 0
-CACHE_TTL = 300  # 缓存有效期（秒）
 
 # 默认配置
 DEFAULT_CLIENT_CONFIG = {
@@ -85,7 +75,6 @@ def load_config(basic_logger=None):
     log_func = print if basic_logger is None else basic_logger.info
     if os.path.exists(config_file_path):
         config.read(config_file_path)
-        log_func(f"已加载配置文件: {config_file_path}")
     else:
         log_func(f"未找到配置文件: {config_file_path}，使用默认配置")
 
@@ -112,25 +101,18 @@ def load_config(basic_logger=None):
         }
     }
 
-def get_banned_ips(logger=None):
-    log_func = logger.info if logger else print
-    global _banned_ips_cache, _cache_timestamp
-    
-    # 使用简单缓存实现
-    current_time = time.time()
-    if _banned_ips_cache and current_time - _cache_timestamp < CACHE_TTL:
-        log_func(f"使用缓存的封禁IP列表，共 {len(_banned_ips_cache)} 个IP")
-        return _banned_ips_cache
+def get_banned_ips(config, logger=None):
+    log_func = logger.info if logger else print    
     
     try:
         # 调用fail2ban-client获取封禁IP
-        result = subprocess.run(['fail2ban-client', 'status', 'sshd'], 
+        result = subprocess.run(['fail2ban-client', 'status', config['fail2ban']['jail']], 
                               capture_output=True, text=True, timeout=10)
         
         if result.returncode != 0:
             log_func(f"执行fail2ban-client命令失败: {result.stderr}")
             # 尝试返回缓存的旧数据，如果存在
-            return _banned_ips_cache if _banned_ips_cache else []
+            return  []
         
         # 解析输出获取IP
         output = result.stdout
@@ -145,16 +127,12 @@ def get_banned_ips(logger=None):
                     # 分割多个IP
                     banned_ips = [ip.strip() for ip in ip_part.split()]
                 break
-        
-        # 更新缓存和时间戳
-        _banned_ips_cache = banned_ips
-        _cache_timestamp = current_time
-        log_func(f"获取到 {len(banned_ips)} 个被封禁的IP并缓存")
+        log_func(f"获取到 {len(banned_ips)} 个被封禁的IP")
         return banned_ips
     except Exception as e:
         log_func(f"获取封禁IP列表时发生错误: {str(e)}")
         # 尝试返回缓存的旧数据
-        return _banned_ips_cache if _banned_ips_cache else []
+        return []
 
 def get_local_ip_address():
     try:
@@ -260,75 +238,6 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
         log_func("所有IP发送成功")
         return True, []
 
-def get_unknown_ips(server_url, ip_address, logger, page_size=100, token=None):
-    """
-    从服务器获取未知IP列表
-    支持分页获取，以处理大量IP数据
-    """
-    # 准备headers，包含认证信息
-    headers = {}
-    if token:
-        headers = {'Authorization': f'Bearer {token}'}
-    
-    try:
-        unknown_ips = []
-        page = 1
-        
-        while True:
-            # 构建带分页参数的URL
-            paginated_url = f"{server_url}/get_ips?page={page}&page_size={page_size}"
-            
-            # 使用会话保持连接，提高多次请求的效率
-            with requests.Session() as session:
-                response = session.get(paginated_url, headers=headers, timeout=30)
-                response.raise_for_status()
-                
-                try:
-                    data = response.json()
-                except ValueError:
-                    logger.error(f"从服务器获取未知IP时收到无效的JSON响应: {response.text}")
-                    return []
-                
-                # 处理数据格式
-                items = data.get('items', [])
-                
-                # 没有更多数据时退出循环
-                if not items:
-                    break
-                
-                # 提取IP地址并过滤空值
-                batch_ips = []
-                for item in items:
-                    ip = item.get('ip', '').strip() or item.get('ip_address', '').strip()
-                    if ip:  # 只添加非空IP
-                        batch_ips.append(ip)
-                
-                unknown_ips.extend(batch_ips)
-                
-                # 检查是否还有更多页面
-                total = data.get('total', 0)
-                if len(unknown_ips) >= total:
-                    break
-                
-                page += 1
-                
-                # 添加短暂延迟，避免对服务器造成过大压力
-                time.sleep(0.1)
-        
-        # 只在日志中显示部分IP以避免日志过大
-        display_limit = 10
-        if len(unknown_ips) <= display_limit:
-            logger.info(f"从服务器获取到的未知IP: {unknown_ips}")
-        else:
-            logger.info(f"从服务器获取到 {len(unknown_ips)} 个未知IP，前{display_limit}个: {unknown_ips[:display_limit]}...")
-            
-        return unknown_ips
-    except requests.exceptions.RequestException as e:
-        logger.error(f"从服务器获取未知IP时出错: {e}")
-        return []
-    except Exception as e:
-        logger.error(f"处理未知IP数据时发生错误: {e}")
-        return []
 
 def get_allowed_ips(logger=None, server_url=None, token=None):
     """获取允许的IP列表
@@ -413,14 +322,7 @@ def main():
     backup_count = log_config.get('backup_count', '3')
     
     # 调用setup_logging函数创建带有文件和控制台处理器的logger
-    basic_logger = setup_logging(log_file, max_bytes, backup_count)
-    
-    # 声明使用全局缓存变量并确保正确初始化
-    global _banned_ips_cache, _cache_timestamp
-    
-    # 确保_cache_timestamp是时间戳而不是字典
-    if isinstance(_cache_timestamp, dict):
-        _cache_timestamp = time.time()
+    basic_logger = setup_logging(log_file, max_bytes, backup_count)  
     
     try:
         # 配置已经在函数开始处加载
@@ -446,14 +348,9 @@ def main():
         ip_address = get_local_ip_address()
         basic_logger.info(f"本地IP: {ip_address}")
         
-        # 定义清理缓存的函数
-        def clear_cache():
-            global _banned_ips_cache, _cache_timestamp
-            _banned_ips_cache.clear()
-            _cache_timestamp = time.time()
         
         # 获取被封禁的IP
-        banned_ips = get_banned_ips(basic_logger)
+        banned_ips = get_banned_ips(config, basic_logger)
         
         # 获取允许的IP
         allowed_ips = get_allowed_ips(basic_logger)
@@ -476,7 +373,7 @@ def main():
         if config.get('sync_remote_banned_ips', True) and remote_banned_ips:
             basic_logger.info("开始同步远端封禁IP到本地")
             # 获取本地当前已封禁的IP
-            local_banned_ips = get_banned_ips(basic_logger)
+            local_banned_ips = get_banned_ips(config, basic_logger)
             
             # 比较差异，只获取需要添加的IP
             to_add_ips, to_remove_ips = compare_ip_lists(remote_banned_ips, local_banned_ips)
@@ -510,15 +407,6 @@ def main():
             else:
                 basic_logger.info("服务器已包含所有本地封禁的IP，无需发送")
         
-        # 清理过期缓存
-        if isinstance(_cache_timestamp, (int, float)) and time.time() - _cache_timestamp > CACHE_TTL:
-            _banned_ips_cache.clear()
-            _cache_timestamp = time.time()
-            basic_logger.info("缓存已清理")
-        
-        # 不再重复获取远端封禁IP，已在上面处理完成
-        
-        clear_cache()
         basic_logger.info("程序执行完成")
         return 0
     except Exception as e:
@@ -554,8 +442,7 @@ def add_ips_to_fail2ban(ips, jail, logger):
             try:
                 # 构建命令行参数 - 批处理多个IP
                 # 注意: 这种方式利用fail2ban-client的批处理能力，如果支持
-                # 不支持批处理时会自动降级为逐个处理
-                logger.info(f"在Fail2Ban中封禁IP {batch}")
+                # 不支持批处理时会自动降级为逐个处理                
                 for ip in batch:
                     try:
                         # 使用单独进程但减少不必要的参数
@@ -634,14 +521,7 @@ def allow_ips_in_fail2ban(ips, jail, logger):
         logger.warning(f"以下IP解禁失败: {failed_ips}")
 
 def get_remote_banned_ips(server_url, token, logger):
-    """获取远端服务器上的封禁IP列表"""
-    # 尝试从简单缓存获取
-    global _remote_banned_ips_cache, _remote_banned_ips_timestamp
-    current_time = time.time()
-    if _remote_banned_ips_cache and current_time - _remote_banned_ips_timestamp < CACHE_TTL:
-        logger.info(f"使用缓存的远端封禁IP列表，共 {len(_remote_banned_ips_cache)} 个IP")
-        return _remote_banned_ips_cache
-    
+    """获取远端服务器上的封禁IP列表"""    
     try:
         url = f"{server_url}/get_ips"
         headers = {
@@ -657,26 +537,15 @@ def get_remote_banned_ips(server_url, token, logger):
             
             # 更新缓存
             if banned_ips:
-                _remote_banned_ips_cache = banned_ips
-                _remote_banned_ips_timestamp = current_time
                 logger.info(f"成功获取到 {len(banned_ips)} 个远端封禁IP并缓存")
             else:
                 logger.warning("获取到空的远端封禁IP列表")
             return banned_ips
         else:
             logger.error(f"获取远端封禁IP请求失败: HTTP {response.status_code}")
-            # 发生异常时尝试返回缓存的IP列表（即使可能过期）
-            if _remote_banned_ips_cache:
-                logger.warning(f"返回过期的缓存IP列表（{len(_remote_banned_ips_cache)}个），因为无法连接到服务器")
-                return _remote_banned_ips_cache
     except Exception as e:
         error_type = type(e).__name__
         logger.error(f"获取远端封禁IP时发生异常 ({error_type}): {str(e)}")
-        
-        # 发生异常时尝试返回缓存的IP列表（即使可能过期）
-        if _remote_banned_ips_cache:
-            logger.warning(f"返回过期的缓存IP列表（{len(_remote_banned_ips_cache)}个），因为无法连接到服务器")
-            return _remote_banned_ips_cache
     
     return []
 
@@ -696,13 +565,6 @@ def compare_ip_lists(remote_ips, local_ips):
 
 def get_remote_allowed_ips(server_url, token, logger):
     """获取远端服务器上的已允许IP列表"""
-    # 尝试从简单缓存获取
-    global _remote_allowed_ips_cache, _remote_allowed_ips_timestamp
-    current_time = time.time()
-    if _remote_allowed_ips_cache and current_time - _remote_allowed_ips_timestamp < CACHE_TTL:
-        logger.info(f"使用缓存的远端允许IP列表，共 {len(_remote_allowed_ips_cache)} 个IP")
-        return _remote_allowed_ips_cache
-    
     try:
         url = f"{server_url}/get_allowed_ips"
         headers = {
@@ -718,27 +580,15 @@ def get_remote_allowed_ips(server_url, token, logger):
             
             # 更新缓存
             if allowed_ips:
-                _remote_allowed_ips_cache = allowed_ips
-                _remote_allowed_ips_timestamp = current_time
-                logger.info(f"成功获取到 {len(allowed_ips)} 个远端允许IP并缓存")
+                logger.info(f"成功获取到 {len(allowed_ips)} 个远端允许IP")
             else:
                 logger.warning("获取到空的远端允许IP列表")
             return allowed_ips
         else:
             logger.error(f"获取远端允许IP请求失败: HTTP {response.status_code}")
-            # 发生异常时尝试返回缓存的IP列表（即使可能过期）
-            if _remote_allowed_ips_cache:
-                logger.warning(f"返回过期的缓存IP列表（{len(_remote_allowed_ips_cache)}个），因为无法连接到服务器")
-                return _remote_allowed_ips_cache
     except Exception as e:
         error_type = type(e).__name__
         logger.error(f"获取远端允许IP时发生异常 ({error_type}): {str(e)}")
-        
-        # 发生异常时尝试返回缓存的IP列表（即使可能过期）
-        if _remote_allowed_ips_cache:
-            logger.warning(f"返回过期的缓存IP列表（{len(_remote_allowed_ips_cache)}个），因为无法连接到服务器")
-            return _remote_allowed_ips_cache
-    
     return []
 
 # 最后一行需要确保是正确的main函数调用
