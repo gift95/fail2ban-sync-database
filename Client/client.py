@@ -189,7 +189,7 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
             # 准备请求数据
             data = {
                 'ips': batch,
-                'local_ip': local_ip,
+                'description': f"来自{local_ip}的批量封禁IP",
                 'jail': jail
             }
             
