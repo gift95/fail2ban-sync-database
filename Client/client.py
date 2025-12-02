@@ -150,7 +150,7 @@ def get_banned_ips(config, logger=None, jail=None):
         all_banned_ips = {}
        
         for current_jail in jails_to_query:
-            log_info(f"[{host_name}] 开始获取 jail {current_jail} 的封禁IP列表")
+            log_info(f"[{host_name}] 开始获取 jail {current_jail} 的本地封禁IP")
             # 调用fail2ban-client获取该jail的封禁IP
             result = subprocess.run(['fail2ban-client', 'status', current_jail], 
                                    capture_output=True, text=True, timeout=10)
@@ -175,7 +175,7 @@ def get_banned_ips(config, logger=None, jail=None):
                     break
             
             all_banned_ips[current_jail] = banned_ips
-            log_info(f"[{host_name}] 获取完成: jail {current_jail} 共有 {len(banned_ips)} 个封禁IP")
+            log_info(f"[{host_name}] 获取完成: jail {current_jail} 共有 {len(banned_ips)} 个本地封禁IP")
         
         # 如果只查询了一个jail，返回该jail的IP列表（保持向后兼容）
         if jail:
@@ -297,7 +297,7 @@ def _send_banned_ips_batch(server_url, banned_ips, host_name, jail, token, log_f
                 
                 # 直接发送未压缩数据
                 response = requests.post(url, headers=headers, json=data, timeout=30)
-                log_func(f"请求响应状态: {response.status_code}")
+                
                 # 检查响应状态
             if response.status_code == 200 or response.status_code == 201:
                 try:
@@ -398,7 +398,10 @@ def main():
             
             # 获取该jail的本地封禁IP
             try:
+                # 只获取一次本地封禁IP列表，用于后续所有操作
                 jail_banned_ips = get_banned_ips(config, basic_logger, jail=jail)
+                # 将jail_banned_ips赋值给local_banned_ips，避免重复获取
+                local_banned_ips = jail_banned_ips
             except Exception as e:
                 basic_logger.error(f"获取 jail {jail} 的封禁IP时出错: {str(e)}")
                 continue
@@ -406,14 +409,17 @@ def main():
             # 应用允许IP规则到该jail
             if config.get('sync_allowed_ips', True) and remote_allowed_ips:
                 basic_logger.info(f"开始应用允许IP规则到 jail: {jail}")
-                allow_ips_in_fail2ban(remote_allowed_ips, jail, basic_logger)
+                # 获取该jail对应的远端封禁IP
+                remote_allowed_jailed_ips = remote_allowed_ips.get('jails', {})
+                remote_allowed_jailed_ips_data =  remote_allowed_jailed_ips.get(jail, [])
+                basic_logger.info(f"获取到 jail {jail} 的远端允许IP列表，共 {len(remote_allowed_jailed_ips_data)} 个IP")
+                allow_ips_in_fail2ban(remote_allowed_jailed_ips_data, jail, basic_logger)
                 basic_logger.info(f"允许IP规则应用完成到 jail: {jail}")
             
             # 同步远端封禁IP到该jail
             if config.get('sync_remote_banned_ips', True) and remote_banned_ips_data:
                 basic_logger.info(f"开始同步远端封禁IP到 jail: {jail}")
-                # 获取该jail当前已封禁的IP
-                local_banned_ips = get_banned_ips(config, basic_logger, jail=jail)
+                # 复用已获取的local_banned_ips，不再重复获取IP列表
                 
                 # 获取该jail对应的远端封禁IP
                 remote_jailed_ips = remote_banned_ips_data.get('jails', {})
@@ -427,8 +433,7 @@ def main():
                     basic_logger.info(f"找到 {len(to_add_ips)} 个需要添加到 jail {jail} 的IP")
                     add_ips_to_fail2ban(to_add_ips, jail, basic_logger)
                 else:
-                    basic_logger.info(f"jail {jail} 已包含所有远端封禁的IP，无需添加")
-                basic_logger.info(f"sync_remove_unlisted_ips {config.get('sync_remove_unlisted_ips', False)} 已配置")    
+                    basic_logger.info(f"jail {jail} 已包含所有远端封禁的IP，无需添加")   
                 # 可选：处理需要移除的IP（如果需要）
                 if config.get('sync_remove_unlisted_ips', False) and to_remove_ips:
                     basic_logger.info(f"找到 {len(to_remove_ips)} 个需要从 jail {jail} 移除的IP")
@@ -666,21 +671,34 @@ def get_remote_allowed_ips(server_url, token, logger):
         
         if response.status_code == 200:
             data = response.json()
-            # 从items数组中提取IP地址列表
-            allowed_ips = [item.get('ip_address') for item in data.get('items', []) if item.get('ip_address')]
+            # 从服务器响应中获取items列表
+            items = data.get('items', [])
             
-            # 更新缓存
-            if allowed_ips:
-                logger.info(f"成功获取到 {len(allowed_ips)} 个远端允许IP")
+            if items:
+                logger.info(f"成功获取到 {len(items)} 个远端允许IP记录(包含jail信息)")
+                # 按jail分组的IP列表
+                jailed_ips = {}
+                for item in items:
+                    ip = item.get('ip_address')
+                    jail = item.get('jail', 'unknown')
+                    if ip:
+                        if jail not in jailed_ips:
+                            jailed_ips[jail] = []
+                        jailed_ips[jail].append(ip)
+                logger.info(f"按jail分组的远端允许IP: {len(jailed_ips)}")
             else:
                 logger.warning("获取到空的远端允许IP列表")
-            return allowed_ips
+            
+            # 返回包含jail信息的完整数据和按jail分组的IP列表
+            return {
+                'jails': jailed_ips if 'jailed_ips' in locals() else {}
+            }
         else:
             logger.error(f"获取远端允许IP请求失败: HTTP {response.status_code}")
     except Exception as e:
         error_type = type(e).__name__
         logger.error(f"获取远端允许IP时发生异常 ({error_type}): {str(e)}")
-    return []
+    return  {'jails': {}}
 
 # 最后一行需要确保是正确的main函数调用
 if __name__ == "__main__":
