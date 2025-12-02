@@ -453,7 +453,7 @@ def main():
                 
                 if to_send_ips:
                     basic_logger.info(f"找到 {len(to_send_ips)} 个需要从 jail {jail} 发送到服务器的IP")
-                    success, failed = send_banned_ips(server_url, to_send_ips, ip_address, jail, token, basic_logger)
+                    success, failed = send_banned_ips(server_url, to_send_ips, host_name, jail, token, basic_logger)
                     if not success and failed:
                         basic_logger.error(f"jail {jail} 部分IP发送失败，共 {len(failed)} 个")
                 else:
