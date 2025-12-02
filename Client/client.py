@@ -527,7 +527,7 @@ def add_ips_to_fail2ban(ips, jail, logger):
                         failed_ips.append(ip)
     
     # 记录详细的统计信息
-    logger.info(f"[状态] jail {jail}: IP封禁操作完成 - 总计: {len(ips)} 个IP, 成功: {success_count}, 失败: {len(failed_ips)}, 成功率: {success_count/len(ips)*100:.1f}%")
+    logger.info(f"[状态] jail {jail}: IP封禁操作完成 - 总计: {len(ips)} 个IP, 成功: {success_count}, 失败: {len(failed_ips)}")
     if failed_ips:
         logger.warning(f"[状态] jail {jail}: 以下IP封禁失败: {failed_ips}")
 
