@@ -28,7 +28,7 @@ DEFAULT_CLIENT_CONFIG = {
         'backup_count': '3'
     },
     'fail2ban': {
-        'jail': 'sshd'
+        'jails': 'sshd'  # 支持多个jail，用逗号分隔
     }
 }
 
@@ -74,7 +74,8 @@ def load_config(basic_logger=None):
     # 使用传入的basic_logger或print记录日志
     log_func = print if basic_logger is None else basic_logger.info
     if os.path.exists(config_file_path):
-        config.read(config_file_path)
+        # 明确指定使用UTF-8编码读取配置文件，避免Windows系统默认GBK编码导致的解码错误
+        config.read(config_file_path, encoding='utf-8')
     else:
         log_func(f"未找到配置文件: {config_file_path}，使用默认配置")
 
@@ -82,6 +83,15 @@ def load_config(basic_logger=None):
     if config.has_option('auth', 'token'):
         token = config.get('auth', 'token')
 
+    # 获取jails配置（支持逗号分隔的多个jail）
+    jails_str = config.get('fail2ban', 'jails', fallback='')
+    # 向后兼容：如果没有设置jails，则尝试获取单个jail配置
+    if not jails_str:
+        jails_str = config.get('fail2ban', 'jail', fallback='sshd')
+    
+    # 将jails字符串分割成列表并去除空白
+    jails = [jail.strip() for jail in jails_str.split(',') if jail.strip()]
+    
     return {
         'server': {
             'host': config.get('server', 'host', fallback='192.168.1.1'),
@@ -94,45 +104,68 @@ def load_config(basic_logger=None):
             'backup_count': config.get('logging', 'backup_count', fallback='3')
         },
         'fail2ban': {
-            'jail': config.get('fail2ban', 'jail', fallback='sshd')
+            'jails': jails,
+            'jail': jails[0] if jails else 'sshd'  # 向后兼容，返回第一个jail
         },
         'auth': {
             'token': token
         }
     }
 
-def get_banned_ips(config, logger=None):
+def get_banned_ips(config, logger=None, jail=None):
     log_func = logger.info if logger else print    
     
     try:
-        # 调用fail2ban-client获取封禁IP
-        result = subprocess.run(['fail2ban-client', 'status', config['fail2ban']['jail']], 
-                              capture_output=True, text=True, timeout=10)
+        # 确定要查询的jails列表
+        if jail:
+            # 如果指定了特定的jail，只查询该jail
+            jails_to_query = [jail]
+        else:
+            # 否则查询所有配置的jails
+            jails_to_query = config['fail2ban']['jails']
         
-        if result.returncode != 0:
-            log_func(f"执行fail2ban-client命令失败: {result.stderr}")
-            # 尝试返回缓存的旧数据，如果存在
-            return  []
+        all_banned_ips = {}
+        total_ips = 0
         
-        # 解析输出获取IP
-        output = result.stdout
-        banned_ips = []
+        for current_jail in jails_to_query:
+            # 调用fail2ban-client获取该jail的封禁IP
+            result = subprocess.run(['fail2ban-client', 'status', current_jail], 
+                                  capture_output=True, text=True, timeout=10)
+            
+            if result.returncode != 0:
+                log_func(f"执行fail2ban-client命令失败(jail: {current_jail}): {result.stderr}")
+                all_banned_ips[current_jail] = []
+                continue
+            
+            # 解析输出获取IP
+            output = result.stdout
+            banned_ips = []
+            
+            # 查找"Banned IP list:"行
+            for line in output.split('\n'):
+                if 'Banned IP list:' in line:
+                    # 提取IP地址部分
+                    ip_part = line.split(':', 1)[1].strip()
+                    if ip_part:
+                        # 分割多个IP
+                        banned_ips = [ip.strip() for ip in ip_part.split()]
+                    break
+            
+            all_banned_ips[current_jail] = banned_ips
+            total_ips += len(banned_ips)
+            log_func(f"获取到 jail {current_jail} 的封禁IP列表，共 {len(banned_ips)} 个IP")
         
-        # 查找"Banned IP list:"行
-        for line in output.split('\n'):
-            if 'Banned IP list:' in line:
-                # 提取IP地址部分
-                ip_part = line.split(':', 1)[1].strip()
-                if ip_part:
-                    # 分割多个IP
-                    banned_ips = [ip.strip() for ip in ip_part.split()]
-                break
-        log_func(f"获取到 {len(banned_ips)} 个被封禁的IP")
-        return banned_ips
+        log_func(f"总共获取到 {total_ips} 个被封禁的IP")
+        
+        # 如果只查询了一个jail，返回该jail的IP列表（保持向后兼容）
+        if jail:
+            return all_banned_ips.get(jail, [])
+        
+        return all_banned_ips
     except Exception as e:
         log_func(f"获取封禁IP列表时发生错误: {str(e)}")
-        # 尝试返回缓存的旧数据
-        return []
+        # 如果指定了jail，返回空列表；否则返回空字典
+        return [] if jail else {}
 
 def get_local_ip_address():
     try:
@@ -144,13 +177,53 @@ def get_local_ip_address():
         print(f"获取主机名时出错: {e}")
         return None
 
-def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=None):
+def send_banned_ips(server_url, banned_ips, local_ip, jail=None, token="", logger=None):
     log_func = logger.info if logger else print
-    if not banned_ips:
-        log_func("没有要发送的封禁IP列表")
-        return True, []
     
-    # 分批处理IP列表，每批最多100个IP
+    # 检查输入格式，支持字典格式(jail -> IP列表)和传统列表格式
+    is_dict_format = isinstance(banned_ips, dict)
+    
+    if is_dict_format:
+        # 如果没有要发送的IP，返回成功
+        if not any(banned_ips.values()):
+            log_func("没有要发送的封禁IP列表")
+            return True, {}
+        
+        all_success = True
+        all_failed_ips = {}
+        
+        # 为每个jail分别发送IP
+        for current_jail, jail_ips in banned_ips.items():
+            if not jail_ips:
+                log_func(f"jail {current_jail} 没有要发送的封禁IP")
+                continue
+            
+            log_func(f"开始发送 jail {current_jail} 的封禁IP列表")
+            success, failed = _send_banned_ips_batch(server_url, jail_ips, local_ip, current_jail, token, log_func)
+            
+            if not success:
+                all_success = False
+                all_failed_ips[current_jail] = failed
+            
+            log_func(f"jail {current_jail} 的IP发送完成")
+        
+        return all_success, all_failed_ips
+    else:
+        # 传统列表格式，保持向后兼容
+        if not banned_ips:
+            log_func("没有要发送的封禁IP列表")
+            return True, []
+        
+        if not jail:
+            log_func("错误：使用列表格式时必须指定jail参数")
+            return False, banned_ips
+        
+        return _send_banned_ips_batch(server_url, banned_ips, local_ip, jail, token, log_func)
+
+
+def _send_banned_ips_batch(server_url, banned_ips, local_ip, jail, token, log_func):
+    """内部函数：发送单个jail的IP批次"""
+    # 分批处理IP列表，每批最多1000个IP
     batch_size = 1000
     failed_ips = []
     
@@ -158,7 +231,7 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
         batch = banned_ips[i:i+batch_size]
         batch_num = (i // batch_size) + 1
         
-        log_func(f"正在发送第 {batch_num} 批 IP，共 {len(batch)} 个")
+        log_func(f"正在发送 jail {jail} 的第 {batch_num} 批 IP，共 {len(batch)} 个")
         
         try:
             # 构建API请求
@@ -167,7 +240,7 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
             # 准备请求数据
             data = {
                 'ips': batch,
-                'description': f"来自{local_ip}的批量封禁IP",
+                'description': f"来自{local_ip}的{jail} jail批量封禁IP",
                 'jail': jail
             }
             
@@ -182,8 +255,6 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
                 with gzip.GzipFile(fileobj=compressed_data, mode='wb', compresslevel=4) as f:
                     f.write(json_bytes)
                 compressed_data.seek(0)
-                
-                # 设置请求头，包含Content-Encoding
                 headers = {
                     'Content-Type': 'application/json',
                     'Content-Encoding': 'gzip',
@@ -208,34 +279,34 @@ def send_banned_ips(server_url, banned_ips, local_ip, jail, token="", logger=Non
                     result = response.json()
                     # 兼容多种响应格式
                     if result.get('success') or not result.get('error'):
-                        log_func(f"第 {batch_num} 批发送成功，影响 {result.get('count', 0)} 个IP")
+                        log_func(f"jail {jail} 的第 {batch_num} 批发送成功，影响 {result.get('count', 0)} 个IP")
                     else:
                         # 某些成功场景可能返回"IP地址已添加"这样的消息
                         error_msg = result.get('message', '') or result.get('error', '')
                         if "已添加" in error_msg:
-                            log_func(f"第 {batch_num} 批发送成功: {error_msg}")
+                            log_func(f"jail {jail} 的第 {batch_num} 批发送成功: {error_msg}")
                         else:
-                            log_func(f"第 {batch_num} 批发送失败: {error_msg}")
+                            log_func(f"jail {jail} 的第 {batch_num} 批发送失败: {error_msg}")
                             failed_ips.extend(batch)
                 except ValueError:
                     # 如果响应不是JSON格式，但状态码成功，也视为成功
-                    log_func(f"第 {batch_num} 批发送成功")
+                    log_func(f"jail {jail} 的第 {batch_num} 批发送成功")
             else:
-                log_func(f"第 {batch_num} 批发送失败: HTTP {response.status_code}")
+                log_func(f"jail {jail} 的第 {batch_num} 批发送失败: HTTP {response.status_code}")
                 failed_ips.extend(batch)
                 
         except Exception as e:
-            log_func(f"第 {batch_num} 批发送时发生异常: {str(e)}")
+            log_func(f"发送 jail {jail} 的第 {batch_num} 批IP时发生异常: {str(e)}")
             failed_ips.extend(batch)
         
         # 每批之间间隔1秒，避免对服务器造成过大压力
         time.sleep(1)
     
     if failed_ips:
-        log_func(f"发送完成，但有 {len(failed_ips)} 个IP发送失败")
+        log_func(f"jail {jail} 共有 {len(failed_ips)} 个IP发送失败")
         return False, failed_ips
     else:
-        log_func("所有IP发送成功")
+        log_func(f"jail {jail} 的所有IP发送成功")
         return True, []
 
 
@@ -340,74 +411,109 @@ def main():
         # 构建完整的服务器URL
         server_url = f"{protocol}://{host}:{port}"
         token = config.get('auth', {}).get('token', '')
-        jail = config.get('fail2ban', {}).get('jail', 'sshd')
         
-        basic_logger.info(f"程序启动，服务器URL: {server_url}, Jail: {jail}")
+        # 获取所有配置的jail列表
+        fail2ban_config = config.get('fail2ban', {})
+        jails = fail2ban_config.get('jails', [])
+        
+        # 如果没有配置jails，使用单个jail作为后备
+        if not jails:
+            jail = fail2ban_config.get('jail', 'sshd')
+            jails = [jail]
+        
+        basic_logger.info(f"程序启动，服务器URL: {server_url}, Jails: {', '.join(jails)}")
         
         # 获取本地IP地址
         ip_address = get_local_ip_address()
         basic_logger.info(f"本地IP: {ip_address}")
         
-        
-        # 获取被封禁的IP
-        banned_ips = get_banned_ips(config, basic_logger)
-        
-        # 获取允许的IP
+        # 获取允许的IP（全局，适用于所有jail）
         allowed_ips = get_allowed_ips(basic_logger)
         
-        # 应用允许IP规则
-        server_token = token
+        # 获取远端封禁IP（只获取一次，包含jail信息，用于所有jail）
+        remote_banned_ips_data = None
+        if config.get('sync_remote_banned_ips', True) or config.get('sync_local_banned_ips', True):
+            remote_banned_ips_data = get_remote_banned_ips(server_url, token, basic_logger)
+        
+        # 获取远端允许IP（只获取一次，用于所有jail）
+        remote_allowed_ips = None
         if config.get('sync_allowed_ips', True):
-            basic_logger.info("开始应用允许IP规则")
-            remote_allowed_ips = get_remote_allowed_ips(server_url, server_token, basic_logger)
-            if remote_allowed_ips:
+            remote_allowed_ips = get_remote_allowed_ips(server_url, token, basic_logger)
+        
+        # 遍历所有jail进行处理
+        for jail in jails:
+            basic_logger.info(f"开始处理 jail: {jail}")
+            
+            # 获取该jail的本地封禁IP
+            try:
+                jail_banned_ips = get_banned_ips(config, basic_logger, jail=jail)
+            except Exception as e:
+                basic_logger.error(f"获取 jail {jail} 的封禁IP时出错: {str(e)}")
+                continue
+            
+            # 应用允许IP规则到该jail
+            if config.get('sync_allowed_ips', True) and remote_allowed_ips:
+                basic_logger.info(f"开始应用允许IP规则到 jail: {jail}")
                 allow_ips_in_fail2ban(remote_allowed_ips, jail, basic_logger)
-            basic_logger.info("允许IP规则应用完成")
-        
-        # 获取远端封禁IP（只获取一次）
-        remote_banned_ips = None
-        if config.get('sync_remote_banned_ips', True) or (banned_ips and config.get('sync_local_banned_ips', True)):
-            remote_banned_ips = get_remote_banned_ips(server_url, server_token, basic_logger)
-        
-        # 同步远端封禁IP到本地
-        if config.get('sync_remote_banned_ips', True) and remote_banned_ips:
-            basic_logger.info("开始同步远端封禁IP到本地")
-            # 获取本地当前已封禁的IP
-            local_banned_ips = get_banned_ips(config, basic_logger)
+                basic_logger.info(f"允许IP规则应用完成到 jail: {jail}")
             
-            # 比较差异，只获取需要添加的IP
-            to_add_ips, to_remove_ips = compare_ip_lists(remote_banned_ips, local_banned_ips)
-            
-            if to_add_ips:
-                basic_logger.info(f"找到 {len(to_add_ips)} 个需要添加的IP")
-                add_ips_to_fail2ban(to_add_ips, jail, basic_logger)
-            else:
-                basic_logger.info("本地已包含所有远端封禁的IP，无需添加")
+            # 同步远端封禁IP到该jail
+            if config.get('sync_remote_banned_ips', True) and remote_banned_ips_data:
+                basic_logger.info(f"开始同步远端封禁IP到 jail: {jail}")
+                # 获取该jail当前已封禁的IP
+                local_banned_ips = get_banned_ips(config, basic_logger, jail=jail)
                 
-            # 可选：处理需要移除的IP（如果需要）
-            if config.get('sync_remove_unlisted_ips', False) and to_remove_ips:
-                basic_logger.info(f"找到 {len(to_remove_ips)} 个需要移除的IP")
-                # 这里可以添加移除IP的逻辑
-            basic_logger.info("远端封禁IP同步完成")
-        
-        # 发送被封禁的IP到服务器
-        if banned_ips:
-            # 使用已获取的远端封禁IP（如果有），不再重复请求
-            # 如果远端列表为空，则所有本地IP都需要发送
-            if remote_banned_ips:
-                to_send_ips, _ = compare_ip_lists(banned_ips, remote_banned_ips)
-            else:
-                to_send_ips = banned_ips  # 远端为空时，所有本地封禁IP都需要上传
+                # 获取该jail对应的远端封禁IP
+                remote_jailed_ips = remote_banned_ips_data.get('by_jail', {})
+                # 对于该jail，我们需要考虑：
+                # 1. 该jail特有的封禁IP
+                # 2. 全局封禁的IP（jail为unknown或所有jail共享的IP）
+                jail_specific_ips = remote_jailed_ips.get(jail, [])
+                global_ips = remote_jailed_ips.get('unknown', [])
+                # 合并该jail需要同步的IP列表
+                jail_remote_ips = list(set(jail_specific_ips + global_ips))
+                
+                basic_logger.info(f"为 jail {jail} 获取到 {len(jail_remote_ips)} 个需要同步的远端IP")
+                
+                # 比较差异，只获取需要添加的IP
+                to_add_ips, to_remove_ips = compare_ip_lists(jail_remote_ips, local_banned_ips)
+                
+                if to_add_ips:
+                    basic_logger.info(f"找到 {len(to_add_ips)} 个需要添加到 jail {jail} 的IP")
+                    add_ips_to_fail2ban(to_add_ips, jail, basic_logger)
+                else:
+                    basic_logger.info(f"jail {jail} 已包含所有远端封禁的IP，无需添加")
+                    
+                # 可选：处理需要移除的IP（如果需要）
+                if config.get('sync_remove_unlisted_ips', False) and to_remove_ips:
+                    basic_logger.info(f"找到 {len(to_remove_ips)} 个需要从 jail {jail} 移除的IP")
+                    # 这里可以添加移除IP的逻辑
+                basic_logger.info(f"远端封禁IP同步完成到 jail: {jail}")
             
-            if to_send_ips:
-                basic_logger.info(f"找到 {len(to_send_ips)} 个需要发送到服务器的IP")
-                success, failed = send_banned_ips(server_url, to_send_ips, ip_address, jail, token, basic_logger)
-                if not success and failed:
-                    basic_logger.error(f"部分IP发送失败，共 {len(failed)} 个")
-            else:
-                basic_logger.info("服务器已包含所有本地封禁的IP，无需发送")
+            # 发送该jail的封禁IP到服务器
+            if jail_banned_ips and config.get('sync_local_banned_ips', True):
+                # 使用已获取的远端封禁IP（如果有），不再重复请求
+                # 如果远端列表为空，则所有本地IP都需要发送
+                if remote_banned_ips_data:
+                    # 获取该jail对应的远端封禁IP
+                    remote_jailed_ips = remote_banned_ips_data.get('by_jail', {})
+                    jail_remote_ips = remote_jailed_ips.get(jail, [])
+                    # 比较差异，只获取需要发送的IP
+                    to_send_ips, _ = compare_ip_lists(jail_banned_ips, jail_remote_ips)
+                else:
+                    to_send_ips = jail_banned_ips  # 远端为空时，所有本地封禁IP都需要上传
+                
+                if to_send_ips:
+                    basic_logger.info(f"找到 {len(to_send_ips)} 个需要从 jail {jail} 发送到服务器的IP")
+                    success, failed = send_banned_ips(server_url, to_send_ips, ip_address, jail, token, basic_logger)
+                    if not success and failed:
+                        basic_logger.error(f"jail {jail} 部分IP发送失败，共 {len(failed)} 个")
+                else:
+                    basic_logger.info(f"服务器已包含 jail {jail} 的所有本地封禁IP，无需发送")
+            
+            basic_logger.info(f"jail {jail} 处理完成")
         
-        basic_logger.info("程序执行完成")
+        basic_logger.info("所有jail处理完成")
         return 0
     except Exception as e:
         basic_logger.error(f"程序执行过程中发生错误: {str(e)}")
@@ -521,7 +627,7 @@ def allow_ips_in_fail2ban(ips, jail, logger):
         logger.warning(f"以下IP解禁失败: {failed_ips}")
 
 def get_remote_banned_ips(server_url, token, logger):
-    """获取远端服务器上的封禁IP列表"""    
+    """获取远端服务器上的封禁IP列表，包含jail信息"""
     try:
         url = f"{server_url}/get_ips"
         headers = {
@@ -532,22 +638,37 @@ def get_remote_banned_ips(server_url, token, logger):
         
         if response.status_code == 200:
             data = response.json()
-            # 从items数组中提取IP地址列表
-            banned_ips = [item.get('ip_address') for item in data.get('items', []) if item.get('ip_address')]
+            # 从服务器响应中获取items列表
+            items = data.get('items', [])
             
-            # 更新缓存
-            if banned_ips:
-                logger.info(f"成功获取到 {len(banned_ips)} 个远端封禁IP并缓存")
+            if items:
+                logger.info(f"成功获取到 {len(items)} 个远端封禁IP记录(包含jail信息)")
+                # 按jail分组的IP列表
+                jailed_ips = {}
+                for item in items:
+                    ip = item.get('ip_address')
+                    jail = item.get('jail', 'unknown')
+                    if ip:
+                        if jail not in jailed_ips:
+                            jailed_ips[jail] = []
+                        jailed_ips[jail].append(ip)
+                logger.debug(f"按jail分组的远端封禁IP: {jailed_ips}")
             else:
                 logger.warning("获取到空的远端封禁IP列表")
-            return banned_ips
+            
+            # 返回包含jail信息的完整数据和按jail分组的IP列表
+            return {
+                'items': items,
+                'by_jail': jailed_ips if 'jailed_ips' in locals() else {}
+            }
         else:
             logger.error(f"获取远端封禁IP请求失败: HTTP {response.status_code}")
     except Exception as e:
         error_type = type(e).__name__
         logger.error(f"获取远端封禁IP时发生异常 ({error_type}): {str(e)}")
     
-    return []
+    # 返回空的结构，保持一致性
+    return {'items': [], 'by_jail': {}}
 
 # 修复：重新添加compare_ip_lists函数
 def compare_ip_lists(remote_ips, local_ips):

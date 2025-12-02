@@ -248,14 +248,14 @@
                 </tr>
                 {% for ip in blocked_ips %}
                 <tr>
-                    <td>{{ ip[1] }}</td>
-                    <td>{{ ip[2] or '-' }}</td>
-                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
-                    <td>{{ ip[4] }}</td>
-                    <td>{{ ip[5] }}</td>
-                    <td>{{ ip[7] }}</td>
+                    <td>{{ ip.ip_address }}</td>
+                    <td>{{ ip.description or '-' }}</td>
+                    <td><span class="status {{ ip.status }}">{{ ip.status }}</span></td>
+                    <td>{{ ip.reported_by }}</td>
+                    <td>{{ ip.blocked_until }}</td>
+                    <td>{{ ip.block_count }}</td>
                     <td>
-                        <form method="post" action="{{ url_for('web_allow_ip', ip=ip[1]) }}">
+                        <form method="post" action="{{ url_for('web_allow_ip', ip=ip.ip_address) }}">
                             <button type="submit" class="action-btn">放行</button>
                         </form>
                     </td>
@@ -321,12 +321,12 @@
                 </tr>
                 {% for ip in allowed_ips %}
                 <tr>
-                    <td>{{ ip[1] }}</td>
-                    <td>{{ ip[2] or '-' }}</td>
-                    <td><span class="status {{ ip[3] }}">{{ ip[3] }}</span></td>
-                    <td>{{ ip[4] }}</td>
-                    <td>{{ ip[7] }}</td>
-                    <td>{{ ip[6] }}</td>
+                    <td>{{ ip.ip_address }}</td>
+                    <td>{{ ip.description or '-' }}</td>
+                    <td><span class="status {{ ip.status }}">{{ ip.status }}</span></td>
+                    <td>{{ ip.reported_by }}</td>
+                    <td>{{ ip.block_count }}</td>
+                    <td>{{ ip.allowed_since }}</td>
                 </tr>
                 {% endfor %}
             </table>

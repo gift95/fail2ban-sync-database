@@ -138,27 +138,44 @@ def setup_logging():
 logger = setup_logging()
 
 def init_db():
-    with closing(sqlite3.connect(DATABASE)) as conn:
+    conn = None
+    try:
+        conn = get_db_connection()
         cursor = conn.cursor()
+        
+        # 检查表结构是否需要更新（添加jail字段）
+        cursor.execute("PRAGMA table_info(ip_addresses)")
+        columns = [column[1] for column in cursor.fetchall()]
+        
+        # 创建表（如果不存在）
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS ip_addresses (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ip_address TEXT NOT NULL UNIQUE,
-                description TEXT,
-                status TEXT CHECK( status IN ('blocked', 'allowed', 'known') ),
-                reported_by TEXT,
-                blocked_until TIMESTAMP,
-                allowed_since TIMESTAMP,
-                block_count INTEGER DEFAULT 1
-            )
+                CREATE TABLE IF NOT EXISTS ip_addresses (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    ip_address TEXT NOT NULL UNIQUE,
+                    description TEXT,
+                    status TEXT CHECK( status IN ('blocked', 'allowed', 'known') ),
+                    reported_by TEXT,
+                    blocked_until TIMESTAMP,
+                    allowed_since TIMESTAMP,
+                    block_count INTEGER DEFAULT 1,
+                    jail TEXT
+                )
         ''')
         
         # 添加数据库索引以优化查询性能
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_ip ON ip_addresses(ip_address)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_status ON ip_addresses(status)')
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_ip_addresses_status_ip ON ip_addresses(status, ip_address)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_jail ON ip_addresses(jail)')
         
         conn.commit()
+        logger.info("数据库初始化成功")
+    except Exception as e:
+        logger.error(f"初始化数据库时出错: {e}")
+        raise
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
 
 # 创建数据库连接池
 class DatabaseConnectionPool:
@@ -322,6 +339,7 @@ def add_ips():
     ips = data.get('ips', [])
     description = data.get('description', '')
     status = data.get('status', 'blocked')
+    jail = data.get('jail', '')  # 获取jail信息
     reported_by = f"{client_name}@{client_ip}"
 
     if not ips:
@@ -338,13 +356,14 @@ def add_ips():
 
         # 批量处理IP，减少数据库操作次数
         for ip in ips:
-            # 一次性查询状态和封禁计数
+            # 一次性查询状态、封禁计数和当前jail
             cursor.execute('''
-                SELECT status, block_count FROM ip_addresses WHERE ip_address = ?
+                SELECT status, block_count, jail FROM ip_addresses WHERE ip_address = ?
             ''', (ip,))
             result = cursor.fetchone()
             current_status = result[0] if result else None
             block_count = result[1] if result else 0
+            current_jail = result[2] if result else None
 
             if current_status == 'allowed':
                 logger.info(f"客户端 {client_name} ({client_ip}) 请求封禁IP {ip}，但当前为allowed状态 - 被忽略")
@@ -354,18 +373,22 @@ def add_ips():
                 block_count += 1
                 block_duration = calculate_block_duration(block_count)
 
+                # 更新时保留原有的jail信息（如果有），否则使用新的jail信息
+                update_jail = current_jail if current_jail else jail
+                
                 cursor.execute('''
                     UPDATE ip_addresses
                     SET status = 'blocked',
                         blocked_until = ?,
                         reported_by = ?,
                         block_count = ?,
-                        allowed_since = NULL
+                        allowed_since = NULL,
+                        jail = ?
                     WHERE ip_address = ?
-                ''', (datetime.now() + block_duration, reported_by, block_count, ip))
+                ''', (datetime.now() + block_duration, reported_by, block_count, update_jail, ip))
 
                 added_ips.append(ip)
-                logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (封禁计数: {block_count}, 封禁时间: {block_duration}, 报告来源: {reported_by})")
+                logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (jail: {update_jail}, 封禁计数: {block_count}, 封禁时间: {block_duration}, 报告来源: {reported_by})")
 
             elif current_status != 'blocked':
                 block_duration = calculate_block_duration(block_count)
@@ -373,21 +396,25 @@ def add_ips():
                 if not current_status:
                     cursor.execute('''
                         INSERT INTO ip_addresses
-                        (ip_address, description, status, reported_by, blocked_until, block_count)
-                        VALUES (?, ?, ?, ?, ?, ?)
-                    ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, 1))
+                        (ip_address, description, status, reported_by, blocked_until, block_count, jail)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, 1, jail))
                 else:
+                    # 更新时保留原有的jail信息（如果有），否则使用新的jail信息
+                    update_jail = current_jail if current_jail else jail
+                    
                     cursor.execute('''
                         UPDATE ip_addresses
                         SET status = 'blocked',
                             blocked_until = ?,
                             reported_by = ?,
-                            block_count = ?
+                            block_count = ?,
+                            jail = ?
                         WHERE ip_address = ?
-                    ''', (datetime.now() + block_duration, reported_by, block_count, ip))
+                    ''', (datetime.now() + block_duration, reported_by, block_count, update_jail, ip))
 
                 added_ips.append(ip)
-                logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (封禁时间: {block_duration}, 报告来源: {reported_by})")
+                logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (jail: {jail}, 封禁时间: {block_duration}, 报告来源: {reported_by})")
 
         conn.commit()
         logger.info(f"客户端 {client_name} ({client_ip}) 成功添加 {len(added_ips)} 个IP地址到封禁列表")
@@ -461,7 +488,8 @@ def get_ip_list(status):
 
         ip_addresses = []
         for row in rows:
-            ip_addresses.append({
+            # 构建IP信息字典，确保包含jail字段
+            ip_info = {
                 "id": row[0],
                 "ip_address": row[1],
                 "description": row[2],
@@ -469,8 +497,10 @@ def get_ip_list(status):
                 "reported_by": row[4],
                 "blocked_until": row[5],
                 "allowed_since": row[6],
-                "block_count": row[7]
-            })
+                "block_count": row[7],
+                "jail": row[8]
+            }
+            ip_addresses.append(ip_info)
         
         # 根据是否使用分页构建不同的响应
         if use_pagination:
@@ -671,9 +701,41 @@ def dashboard():
         allowed_ips = cursor.fetchall()
         allowed_total_pages = (allowed_total + allowed_per_page - 1) // allowed_per_page
         
+        # 处理封禁IP列表，确保包含jail字段
+        processed_blocked_ips = []
+        for row in blocked_ips:
+            ip_dict = {
+                'id': row[0],
+                'ip_address': row[1],
+                'description': row[2],
+                'status': row[3],
+                'reported_by': row[4],
+                'blocked_until': row[5],
+                'allowed_since': row[6],
+                'block_count': row[7],
+                'jail': row[8]
+            }
+            processed_blocked_ips.append(ip_dict)
+        
+        # 处理已放行IP列表，确保包含jail字段
+        processed_allowed_ips = []
+        for row in allowed_ips:
+            ip_dict = {
+                'id': row[0],
+                'ip_address': row[1],
+                'description': row[2],
+                'status': row[3],
+                'reported_by': row[4],
+                'blocked_until': row[5],
+                'allowed_since': row[6],
+                'block_count': row[7],
+                'jail': row[8]
+            }
+            processed_allowed_ips.append(ip_dict)
+        
         return render_template('dashboard.html', 
-                             blocked_ips=blocked_ips, 
-                             allowed_ips=allowed_ips,
+                             blocked_ips=processed_blocked_ips, 
+                             allowed_ips=processed_allowed_ips,
                              username=session['username'],
                              search_ip=search_ip,
                              # 封禁IP的分页信息
