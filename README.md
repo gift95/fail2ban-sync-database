@@ -56,8 +56,7 @@ Fail2BanSync 是一个强大的中央 IP 同步系统，专门为运行 Fail2Ban
 
 ### 前提条件
 
-- **操作系统**：Ubuntu Server 20.04 LTS 或更高版本
-- **Python 3**：需要 Python 3.6 或更高版本
+- **Python 3**：需要 Python 3
 - **权限**：安装过程需要 root 权限
 - **Fail2Ban**：客户端服务器需已安装并配置 Fail2Ban
 ```
@@ -70,49 +69,29 @@ bantime = -1
 ```
 ### 服务器安装
 
-1. **准备安装文件**：
-   ```bash
-   # 克隆项目
-   git clone https://github.com/gift95/fail2ban-sync-database.git
-   cd fail2ban-sync/Server
-   ```
-
-2. **执行安装脚本**：
-   ```bash
-   chmod +x install_server.sh
-   ./install_server.sh
-   ```
-
-3. **配置服务器**：
+  1. **一键执行脚本**：
+  ```
+   curl -s -o install_server.sh https://raw.githubusercontent.com/gift95/fail2ban-sync-database/refs/heads/main/Server/install_server.sh &&  bash   install_server.sh
+  ```
+2. **配置服务器**：
    根据需要编辑 `/opt/fail2bansync/serverconfig.ini` 文件，调整令牌和其他配置项。
 
-4. **验证安装**：
+3. **验证安装**：
    ```bash
    sudo systemctl status fail2bansync-server
    ```
 
 5. **查看日志**：
    服务器日志位于：`/opt/fail2bansync/server.log`
+   
 
 ### 客户端安装
 
-1. **准备安装文件**：
-   ```bash
-   # 在客户端服务器上克隆项目
-   git clone https://github.com/gift95/fail2ban-sync-database.git
-   cd fail2ban-sync/Client
-   ```
-
-2. **执行安装脚本**：
-   ```bash
-   chmod +x install_client.sh
-   ./install_client.sh
-   ```
-
-3. **配置客户端**：
-   编辑 `/opt/fail2bansync-client/clientconfig.ini` 文件，输入服务器 IP 地址和认证令牌。
-
-4. **验证安装**：
+1.  **一键执行脚本**：
+  ```
+   curl -s -o install_client.sh https://raw.githubusercontent.com/gift95/fail2ban-sync-database/refs/heads/main/Server/install_client.sh &&  bash   install_client.sh 服务器IP地址   认证令牌
+  ```
+2. **验证安装**：
    ```bash
    # 检查服务状态
    sudo systemctl status fail2bansync-client
@@ -221,7 +200,7 @@ sudo systemctl stop fail2bansync-server
 cp /opt/fail2bansync/ip_management.db /opt/fail2bansync/ip_management.db.backup
 
 # 3. 替换服务器文件
-cp server.py /opt/fail2bansync/
+ curl -s -o install_server.sh https://raw.githubusercontent.com/gift95/fail2ban-sync-database/refs/heads/main/Server/install_server.sh &&  bash   install_server.sh
 
 # 4. 重启服务
 sudo systemctl start fail2bansync-server
@@ -237,7 +216,7 @@ sudo systemctl status fail2bansync-server
 sudo systemctl stop fail2bansync-client
 
 # 2. 替换客户端文件
-cp client.py /opt/fail2bansync-client/
+ curl -s -o install_client.sh https://raw.githubusercontent.com/gift95/fail2ban-sync-database/refs/heads/main/Client/install_client.sh &&  bash   install_client.sh
 
 # 3. 重启服务
 sudo systemctl start fail2bansync-client
@@ -268,6 +247,7 @@ sudo systemctl status fail2bansync-client
 **版本**：v2.0.0  
 
 **Fail2BanSync – 现代化多服务器 IP 封禁协同解决方案**
+
 
 
 
