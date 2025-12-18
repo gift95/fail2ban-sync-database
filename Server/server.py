@@ -374,7 +374,7 @@ def add_ips():
                 block_duration = calculate_block_duration(block_count)
 
                 # 更新时保留原有的jail信息（如果有），否则使用新的jail信息
-                update_jail = current_jail if current_jail else jail
+                update_jail =  jail
                 
                 cursor.execute('''
                     UPDATE ip_addresses
@@ -399,9 +399,8 @@ def add_ips():
                         (ip_address, description, status, reported_by, blocked_until, block_count, jail)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
                     ''', (ip, description, 'blocked', reported_by, datetime.now() + block_duration, 1, jail))
-                else:
-                    # 更新时保留原有的jail信息（如果有），否则使用新的jail信息
-                    update_jail = current_jail if current_jail else jail
+                else:                    
+                    update_jail =  jail
                     
                     cursor.execute('''
                         UPDATE ip_addresses
@@ -415,7 +414,8 @@ def add_ips():
 
                 added_ips.append(ip)
                 logger.info(f"客户端 {client_name} ({client_ip}) 已封禁IP {ip} (jail: {jail}, 封禁时间: {block_duration}, 报告来源: {reported_by})")
-
+            else:
+                logger.info(f"客户端 {client_name} ({client_ip}) (jail: {jail}) 请求封禁IP {ip}，但当前状态为jail: {current_jail} -- blocked - 被忽略")
         conn.commit()
         logger.info(f"客户端 {client_name} ({client_ip}) 成功添加 {len(added_ips)} 个IP地址到封禁列表")
         return jsonify({"message": "IP地址已添加", "added_ips": added_ips}), 201
@@ -454,7 +454,7 @@ def get_ip_list(status):
         per_page = int(request.args.get('per_page', 50))
         search_ip = request.args.get('search_ip', '').strip()
         
-        # 构建查询SQL
+        # 执行原始查询逻辑
         if search_ip:
             # 搜索过滤
             cursor.execute('SELECT COUNT(*) FROM ip_addresses WHERE status = ? AND ip_address LIKE ?', 
@@ -502,6 +502,30 @@ def get_ip_list(status):
             }
             ip_addresses.append(ip_info)
         
+        # 为不同jail添加计数功能
+        jail_counts = {}
+        # 构建jail计数的SQL查询，根据status和搜索条件
+        if search_ip:
+            cursor.execute('''
+                SELECT jail, COUNT(*) as count 
+                FROM ip_addresses 
+                WHERE status = ? AND ip_address LIKE ? 
+                GROUP BY jail
+            ''', (status, f'%{search_ip}%'))
+        else:
+            cursor.execute('''
+                SELECT jail, COUNT(*) as count 
+                FROM ip_addresses 
+                WHERE status = ? 
+                GROUP BY jail
+            ''', (status,))
+        
+        # 处理查询结果
+        jail_rows = cursor.fetchall()
+        for jail_row in jail_rows:
+            jail_name = jail_row[0] or 'unknown'
+            jail_counts[jail_name] = jail_row[1]
+        
         # 根据是否使用分页构建不同的响应
         if use_pagination:
             # 计算总页数
@@ -516,7 +540,8 @@ def get_ip_list(status):
                     "current_page": page,
                     "items_per_page": per_page,
                     "search_ip": search_ip
-                }
+                },
+                "jail_counts": jail_counts
             }
             
             status_names = {
@@ -532,7 +557,8 @@ def get_ip_list(status):
             response = {
                 "items": ip_addresses,
                 "total_items": total_count,
-                "search_ip": search_ip
+                "search_ip": search_ip,
+                "jail_counts": jail_counts
             }
             
             status_names = {
@@ -542,7 +568,9 @@ def get_ip_list(status):
             }
             
             query_info = f"(搜索: {search_ip}) " if search_ip else ""
-            logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表 {query_info}共 {total_count} 个")
+            # 拼接各 jail 及对应数量
+            jail_detail = ', '.join([f"{j}:{c}" for j, c in jail_counts.items()])
+            logger.info(f"客户端 {client_name} ({client_ip}) 请求获取{status_names.get(status, status)}IP列表 {query_info}共 {total_count} 个 jail 数量: {len(jail_counts)}  jail 列表: {jail_detail}")
         
         return jsonify(response), 200
     except Exception as e:
@@ -807,6 +835,76 @@ def web_allow_ip(ip):
         if conn:
             db_pool.return_connection(conn)
 
+# 新增批量放行接口
+@app.route('/web_allow_ips_batch', methods=['POST'])
+def web_allow_ips_batch():
+    if 'username' not in session:
+        return jsonify({'success': False, 'message': '未登录'}), 401
+    
+    update_ip_status()
+    conn = None
+    
+    try:
+        # 获取批量选中的IP列表
+        selected_ips = request.form.getlist('selected_ips')
+        if not selected_ips:
+            flash('请选择需要放行的IP地址', 'warning')
+            return redirect(url_for('dashboard'))
+        
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        conn.execute('BEGIN TRANSACTION')
+        
+        # 统计成功/失败的IP
+        success_ips = []
+        fail_ips = []
+        
+        for ip in selected_ips:
+            # 检查IP状态
+            cursor.execute('''
+                SELECT status FROM ip_addresses WHERE ip_address = ?
+            ''', (ip,))
+            result = cursor.fetchone()
+            
+            if not result:
+                fail_ips.append(f"{ip}（不存在）")
+                continue
+            
+            current_status = result[0]
+            if current_status != 'blocked':
+                fail_ips.append(f"{ip}（当前状态：{current_status}）")
+                continue
+            
+            # 更新IP状态
+            cursor.execute('''
+                UPDATE ip_addresses
+                SET status = 'allowed', allowed_since = ?
+                WHERE ip_address = ? AND status = 'blocked'
+            ''', (datetime.now(), ip))
+            success_ips.append(ip)
+        
+        conn.commit()
+        
+        # 记录日志和提示信息
+        logger.info(f"用户 {session['username']} 批量放行IP：成功{len(success_ips)}个，失败{len(fail_ips)}个")
+        if success_ips:
+            flash(f'成功放行IP：{", ".join(success_ips)}', 'success')
+        if fail_ips:
+            flash(f'放行失败的IP：{", ".join(fail_ips)}', 'warning')
+        
+        return redirect(url_for('dashboard'))
+        
+    except Exception as e:
+        if conn:
+            conn.rollback()
+        logger.error(f"用户 {session['username']} 批量放行IP时出错: {e}")
+        flash('批量放行IP时发生错误', 'error')
+        return redirect(url_for('dashboard'))
+    finally:
+        if conn:
+            db_pool.return_connection(conn)
+
+
 # 设置密钥用于session加密
 app.secret_key = os.urandom(24)
 # 设置session过期时间
@@ -826,6 +924,7 @@ if __name__ == '__main__':
         # 关闭所有数据库连接
         db_pool.close_all()
         logger.info("服务器已关闭，所有资源已释放")
+
 
 
 
