@@ -1,0 +1,59 @@
+name: Replace Links in Markdown Files
+
+on:
+  push:
+    branches:
+      - main
+      #- master
+  workflow_dispatch:  # 允许手动触发
+
+jobs:
+  replace-links:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # 获取完整历史，确保能提交更改
+        token: ${{ secrets.GHTOKEN }}
+    
+    - name: Replace links in markdown files
+      run: |
+        # 定义替换规则
+        OLD_URL="https://gitea.yxliu.cc/gift95/fail2ban-sync"
+        NEW_URL="https://github.com/gift95/fail2ban-sync-database"
+        
+        OLD_RAW="https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/"
+        NEW_RAW="https://raw.githubusercontent.com/gift95/fail2ban-sync-database/refs/heads/"
+        
+        # 查找所有 markdown 文件并执行替换
+        find . -type f -name "*.md" -not -path "./.git/*" | while read file; do
+          # 检查文件是否包含需要替换的内容
+          if grep -q "$OLD_URL" "$file" || grep -q "$OLD_RAW" "$file"; then
+            echo "Processing: $file"
+            # 执行替换（macOS 和 Linux 兼容的 sed 语法）
+            sed -i "s|$OLD_URL|$NEW_URL|g" "$file"
+            sed -i "s|$OLD_RAW|$NEW_RAW|g" "$file"
+          fi
+        done
+    
+    - name: Check for changes
+      id: git-check
+      run: |
+        git config --global user.name "github-actions[bot]"
+        git config --global user.email "github-actions[bot]@users.noreply.github.com"
+        if [[ -n $(git status -s) ]]; then
+          echo "changes=true" >> $GITHUB_OUTPUT
+          echo "Changes detected"
+        else
+          echo "changes=false" >> $GITHUB_OUTPUT
+          echo "No changes to commit"
+        fi
+    
+    - name: Commit and push changes
+      if: steps.git-check.outputs.changes == 'true'
+      run: |
+        git add .
+        git commit -m "docs: update repository links from gitea to github [skip ci]"
+        git push origin HEAD:${{ github.ref_name }}
