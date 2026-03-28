@@ -64,6 +64,19 @@ Fail2BanSync 是一个强大的中央 IP 同步系统，专门为运行 Fail2Ban
 
 ### 服务器安装
 
+   #### 一键安装与卸载
+
+   ```bash
+   #一键安装Server
+   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/install_server.sh
+   #一键安装Client
+   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/install_client.sh
+   #一键卸载Server
+   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/uninstall_server.sh
+   #一键卸载Client
+   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/uninstall_client.sh
+   ```
+   #### 手动安装
 1. **准备安装文件**：
    ```bash
    # 克隆项目
