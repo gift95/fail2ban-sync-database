@@ -73,7 +73,7 @@ sudo systemctl enable fail2ban
 ```bash
 # 1. 克隆项目（或下载相关文件）
 cd /tmp
-git clone https://gitea.yxliu.cc/gift95/fail2ban-sync.git
+git clone https://github.com/gift95/fail2ban-sync-database.git
 cd fail2ban-sync/Client
 
 # 2. 赋予脚本执行权限
@@ -367,7 +367,7 @@ cp /opt/fail2bansync-client/clientconfig.ini /tmp/
 
 # 3. 下载新版本的 client.py
 cd /opt/fail2bansync-client
-sudo curl -s -o client.py https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/client.py
+sudo curl -s -o client.py https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Client/client.py
 
 # 4. 恢复配置文件
 cp /tmp/clientconfig.ini /opt/fail2bansync-client/
@@ -426,7 +426,7 @@ jail = apache-badbots  # 保护 Apache 服务器免受恶意爬虫攻击
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/LICENSE) 文件。
+本项目采用 MIT 许可证 - 详见 [LICENSE](https://github.com/gift95/fail2ban-sync-database/raw/branch/main/LICENSE) 文件。
 
 ## 🆘 支持
 
@@ -435,7 +435,7 @@ jail = apache-badbots  # 保护 Apache 服务器免受恶意爬虫攻击
 1. 查阅本文档中的 [故障排除](#故障排除) 部分
 2. 检查 [应用日志](#查看日志) 获取详细错误信息
 3. 确认服务器端日志中是否有相关记录
-4. 访问项目的 [Gitea Issues](https://gitea.yxliu.cc/gift95/fail2ban-sync/issues) 页面提交问题
+4. 访问项目的 [Gitea Issues](https://github.com/gift95/fail2ban-sync-database/issues) 页面提交问题
 5. 联系项目维护者获取直接支持
 
 ---

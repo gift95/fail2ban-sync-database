@@ -68,19 +68,19 @@ Fail2BanSync 是一个强大的中央 IP 同步系统，专门为运行 Fail2Ban
 
    ```bash
    #一键安装Server
-   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/install_server.sh
+   bash  https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Server/install_server.sh
    #一键安装Client
-   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/install_client.sh
+   bash  https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Client/install_client.sh
    #一键卸载Server
-   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Server/uninstall_server.sh
+   bash  https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Server/uninstall_server.sh
    #一键卸载Client
-   bash  https://gitea.yxliu.cc/gift95/fail2ban-sync/raw/branch/main/Client/uninstall_client.sh
+   bash  https://github.com/gift95/fail2ban-sync-database/raw/branch/main/Client/uninstall_client.sh
    ```
    #### 手动安装
 1. **准备安装文件**：
    ```bash
    # 克隆项目
-   git clone https://gitea.yxliu.cc/gift95/fail2ban-sync.git
+   git clone https://github.com/gift95/fail2ban-sync-database.git
    cd fail2ban-sync/Server
    ```
 
@@ -106,7 +106,7 @@ Fail2BanSync 是一个强大的中央 IP 同步系统，专门为运行 Fail2Ban
 1. **准备安装文件**：
    ```bash
    # 在客户端服务器上克隆项目
-   git clone https://gitea.yxliu.cc/gift95/fail2ban-sync.git
+   git clone https://github.com/gift95/fail2ban-sync-database.git
    cd fail2ban-sync/Client
    ```
 
@@ -260,14 +260,14 @@ sudo systemctl status fail2bansync-client
 
 ## 📄 许可证
 
-本项目采用 MIT 许可证。详情请参阅 [LICENSE](https://gitea.yxliu.cc/gift95/fail2ban-sync/src/branch/main/LICENSE) 文件。
+本项目采用 MIT 许可证。详情请参阅 [LICENSE](https://github.com/gift95/fail2ban-sync-database/src/branch/main/LICENSE) 文件。
 
 ## 📞 联系我们
 
 如有疑问、建议或需要帮助，请联系项目维护者。
 
-- **项目主页**：[https://gitea.yxliu.cc/gift95/fail2ban-sync](https://gitea.yxliu.cc/gift95/fail2ban-sync)
-- **问题反馈**：[https://gitea.yxliu.cc/gift95/fail2ban-sync/issues](https://gitea.yxliu.cc/gift95/fail2ban-sync/issues)
+- **项目主页**：[https://github.com/gift95/fail2ban-sync-database](https://github.com/gift95/fail2ban-sync-database)
+- **问题反馈**：[https://github.com/gift95/fail2ban-sync-database/issues](https://github.com/gift95/fail2ban-sync-database/issues)
 
 ---
 
